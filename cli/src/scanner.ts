@@ -4,6 +4,12 @@ import ignore, { type Ignore } from "ignore";
 import {
   analyzeSwiftFile,
   analyzeReactFile,
+  analyzeGoFile,
+  analyzeRustFile,
+  analyzePythonFile,
+  analyzeJavaFile,
+  analyzeVueFile,
+  analyzeRubyFile,
   buildGraph,
   graphToMermaid,
   graphToAreas,
@@ -34,6 +40,10 @@ type ProjectType =
   | "django"
   | "go"
   | "rust"
+  | "python"
+  | "java"
+  | "kotlin"
+  | "ruby"
   | "generic";
 
 const SENSITIVE_FILES = new Set([
@@ -173,6 +183,19 @@ async function detectProjectType(root: string): Promise<ProjectType> {
 
   // Rust
   if (await fileExists(join(root, "Cargo.toml"))) return "rust";
+
+  // Java / Kotlin (Spring Boot, Android, general)
+  if (await fileExists(join(root, "build.gradle")) || await fileExists(join(root, "build.gradle.kts")) || await fileExists(join(root, "pom.xml"))) {
+    // Check for Kotlin
+    const hasKotlin = entries.some(e => e === "build.gradle.kts") || await fileExists(join(root, "src", "main", "kotlin"));
+    return hasKotlin ? "kotlin" : "java";
+  }
+
+  // Ruby (non-Rails — Rails was already caught above)
+  if (await fileExists(join(root, "Gemfile")) || entries.some(e => e.endsWith(".gemspec"))) return "ruby";
+
+  // Python (non-Django — Django was already caught above)
+  if (await fileExists(join(root, "pyproject.toml")) || await fileExists(join(root, "setup.py")) || await fileExists(join(root, "requirements.txt"))) return "python";
 
   return "generic";
 }
@@ -406,6 +429,138 @@ async function scanDjango(root: string, ig: Ignore, verbose: boolean): Promise<A
   return areas;
 }
 
+async function scanGo(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
+  const goFiles = await collectFiles(root, ig, root, new Set([".go"]), 5);
+  if (verbose) console.log(`Scanning ${goFiles.length} Go files...`);
+
+  const nodes: FileNode[] = [];
+  for (const file of goFiles) {
+    const node = await analyzeGoFile(file);
+    if (node) nodes.push(node);
+  }
+  if (verbose) console.log(`Analyzed ${nodes.length} Go types`);
+
+  const { roots } = buildGraph(nodes);
+  const productName = toKebabCase(basename(root)) || "app";
+  const mermaid = graphToMermaid(productName, roots);
+  const graphAreas = graphToAreas(roots);
+  return {
+    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "view" as const })),
+    mermaid,
+  };
+}
+
+async function scanRust(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
+  const rsFiles = await collectFiles(root, ig, root, new Set([".rs"]), 5);
+  if (verbose) console.log(`Scanning ${rsFiles.length} Rust files...`);
+
+  const nodes: FileNode[] = [];
+  for (const file of rsFiles) {
+    const node = await analyzeRustFile(file);
+    if (node) nodes.push(node);
+  }
+  if (verbose) console.log(`Analyzed ${nodes.length} Rust types`);
+
+  const { roots } = buildGraph(nodes);
+  const productName = toKebabCase(basename(root)) || "app";
+  const mermaid = graphToMermaid(productName, roots);
+  const graphAreas = graphToAreas(roots);
+  return {
+    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "view" as const })),
+    mermaid,
+  };
+}
+
+async function scanPython(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
+  const pyFiles = await collectFiles(root, ig, root, new Set([".py"]), 5);
+  if (verbose) console.log(`Scanning ${pyFiles.length} Python files...`);
+
+  const nodes: FileNode[] = [];
+  for (const file of pyFiles) {
+    const node = await analyzePythonFile(file);
+    if (node) nodes.push(node);
+  }
+  if (verbose) console.log(`Analyzed ${nodes.length} Python modules`);
+
+  const { roots } = buildGraph(nodes);
+  const productName = toKebabCase(basename(root)) || "app";
+  const mermaid = graphToMermaid(productName, roots);
+  const graphAreas = graphToAreas(roots);
+  return {
+    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "view" as const })),
+    mermaid,
+  };
+}
+
+async function scanJava(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
+  const javaFiles = await collectFiles(root, ig, root, new Set([".java", ".kt"]), 6);
+  if (verbose) console.log(`Scanning ${javaFiles.length} Java/Kotlin files...`);
+
+  const nodes: FileNode[] = [];
+  for (const file of javaFiles) {
+    const node = await analyzeJavaFile(file);
+    if (node) nodes.push(node);
+  }
+  if (verbose) console.log(`Analyzed ${nodes.length} Java/Kotlin types`);
+
+  const { roots } = buildGraph(nodes);
+  const productName = toKebabCase(basename(root)) || "app";
+  const mermaid = graphToMermaid(productName, roots);
+  const graphAreas = graphToAreas(roots);
+  return {
+    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "view" as const })),
+    mermaid,
+  };
+}
+
+async function scanVue(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
+  const vueFiles = await collectFiles(root, ig, root, new Set([".vue"]), 5);
+  // Also include TS/JS files that might be composables/stores
+  const tsFiles = await collectFiles(root, ig, root, new Set([".ts", ".tsx"]), 5);
+  if (verbose) console.log(`Scanning ${vueFiles.length} Vue SFCs + ${tsFiles.length} TS files...`);
+
+  const nodes: FileNode[] = [];
+  for (const file of vueFiles) {
+    const node = await analyzeVueFile(file);
+    if (node) nodes.push(node);
+  }
+  for (const file of tsFiles) {
+    const node = await analyzeReactFile(file); // TSX analysis works for TS too
+    if (node) nodes.push(node);
+  }
+  if (verbose) console.log(`Analyzed ${nodes.length} Vue/TS components`);
+
+  const { roots } = buildGraph(nodes);
+  const productName = toKebabCase(basename(root)) || "app";
+  const mermaid = graphToMermaid(productName, roots);
+  const graphAreas = graphToAreas(roots);
+  return {
+    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "component" as const })),
+    mermaid,
+  };
+}
+
+async function scanRuby(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
+  const rbFiles = await collectFiles(root, ig, root, new Set([".rb"]), 5);
+  if (verbose) console.log(`Scanning ${rbFiles.length} Ruby files...`);
+
+  const nodes: FileNode[] = [];
+  for (const file of rbFiles) {
+    const node = await analyzeRubyFile(file);
+    if (node) nodes.push(node);
+  }
+  if (verbose) console.log(`Analyzed ${nodes.length} Ruby classes`);
+
+  const { roots } = buildGraph(nodes);
+  const productName = toKebabCase(basename(root)) || "app";
+  const mermaid = graphToMermaid(productName, roots);
+  const graphAreas = graphToAreas(roots);
+  return {
+    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "view" as const })),
+    mermaid,
+  };
+}
+
 async function scanGeneric(root: string, ig: Ignore, verbose: boolean): Promise<AreaToken[]> {
   const areas: AreaToken[] = [];
 
@@ -544,13 +699,52 @@ export async function scan(
       break;
     }
     case "rails": {
-      areas = await scanRails(root, ig, !!options.verbose);
-      mermaid = generateMermaid(name, areas);
+      const result = await scanRuby(root, ig, !!options.verbose);
+      areas = result.areas;
+      mermaid = result.mermaid;
+      break;
+    }
+    case "ruby": {
+      const result = await scanRuby(root, ig, !!options.verbose);
+      areas = result.areas;
+      mermaid = result.mermaid;
       break;
     }
     case "django": {
-      areas = await scanDjango(root, ig, !!options.verbose);
-      mermaid = generateMermaid(name, areas);
+      const result = await scanPython(root, ig, !!options.verbose);
+      areas = result.areas;
+      mermaid = result.mermaid;
+      break;
+    }
+    case "python": {
+      const result = await scanPython(root, ig, !!options.verbose);
+      areas = result.areas;
+      mermaid = result.mermaid;
+      break;
+    }
+    case "go": {
+      const result = await scanGo(root, ig, !!options.verbose);
+      areas = result.areas;
+      mermaid = result.mermaid;
+      break;
+    }
+    case "rust": {
+      const result = await scanRust(root, ig, !!options.verbose);
+      areas = result.areas;
+      mermaid = result.mermaid;
+      break;
+    }
+    case "java":
+    case "kotlin": {
+      const result = await scanJava(root, ig, !!options.verbose);
+      areas = result.areas;
+      mermaid = result.mermaid;
+      break;
+    }
+    case "vue": {
+      const result = await scanVue(root, ig, !!options.verbose);
+      areas = result.areas;
+      mermaid = result.mermaid;
       break;
     }
     default: {

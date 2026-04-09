@@ -131,6 +131,295 @@ export async function analyzeReactFile(path: string): Promise<FileNode | null> {
   };
 }
 
+// ─── Go analyzer ───
+
+export async function analyzeGoFile(path: string): Promise<FileNode | null> {
+  let content: string;
+  try {
+    content = await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+
+  const base = basename(path, ".go");
+  if (base === "main" || base.endsWith("_test")) return null;
+
+  // Find the package name + exported types
+  const pkgMatch = content.match(/^package\s+(\w+)/m);
+  if (!pkgMatch) return null;
+
+  // Find exported structs/interfaces as the primary types
+  const typeMatches = [...content.matchAll(/type\s+([A-Z]\w+)\s+(?:struct|interface)\b/g)];
+  const typeName = typeMatches[0]?.[1] ?? capitalize(base);
+  const name = toKebab(typeName);
+  if (!name) return null;
+
+  // References: other packages imported + types referenced
+  const refs = new Set<string>();
+  for (const match of content.matchAll(/\b([A-Z][A-Za-z0-9]+)\b\./g)) {
+    refs.add(match[1]);
+  }
+  // Local type references
+  for (const match of content.matchAll(/\b([A-Z][A-Za-z0-9]{2,})\b/g)) {
+    const ref = match[1];
+    if (ref !== typeName && !["TODO", "FIXME", "NOTE", "HTTP", "JSON", "UUID", "API", "URL", "SQL", "EOF"].includes(ref)) {
+      refs.add(ref);
+    }
+  }
+
+  const lines = content.split("\n").length;
+  const branches = countPatterns(content, [
+    /\bif\b/g, /\bswitch\b/g, /\bcase\b/g, /\belse\b/g,
+    /\bfor\b/g, /\bselect\b/g,
+  ]);
+  const depth = maxNestingDepth(content);
+
+  return {
+    path, name, typeName,
+    references: [...refs],
+    complexity: { lines, branches, depth, references: refs.size },
+  };
+}
+
+// ─── Rust analyzer ───
+
+export async function analyzeRustFile(path: string): Promise<FileNode | null> {
+  let content: string;
+  try {
+    content = await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+
+  const base = basename(path, ".rs");
+  if (base === "mod" || base === "lib" || base === "main" || base.endsWith("_test")) return null;
+
+  // Find primary struct/enum/trait
+  const typeMatches = [...content.matchAll(/pub\s+(?:struct|enum|trait)\s+(\w+)/g)];
+  const typeName = typeMatches[0]?.[1] ?? capitalize(base);
+  const name = toKebab(typeName);
+  if (!name) return null;
+
+  // References: use statements + type references
+  const refs = new Set<string>();
+  for (const match of content.matchAll(/use\s+(?:crate|super)::(\w+)/g)) {
+    refs.add(capitalize(match[1]));
+  }
+  for (const match of content.matchAll(/\b([A-Z][A-Za-z0-9]{2,})\b/g)) {
+    const ref = match[1];
+    if (ref !== typeName && !["String", "Vec", "Option", "Result", "Box", "Arc", "Mutex", "HashMap", "HashSet", "BTreeMap", "None", "Some", "Ok", "Err", "Self", "Send", "Sync", "Clone", "Debug", "Display", "Default", "Error", "From", "Into"].includes(ref)) {
+      refs.add(ref);
+    }
+  }
+
+  const lines = content.split("\n").length;
+  const branches = countPatterns(content, [
+    /\bif\b/g, /\bmatch\b/g, /\belse\b/g, /\bloop\b/g,
+    /\bfor\b/g, /\bwhile\b/g, /=>\s/g,
+  ]);
+  const depth = maxNestingDepth(content);
+
+  return {
+    path, name, typeName,
+    references: [...refs],
+    complexity: { lines, branches, depth, references: refs.size },
+  };
+}
+
+// ─── Python analyzer ───
+
+export async function analyzePythonFile(path: string): Promise<FileNode | null> {
+  let content: string;
+  try {
+    content = await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+
+  const base = basename(path, ".py");
+  if (base.startsWith("test_") || base.endsWith("_test") || base === "__init__" || base === "conftest" || base === "setup" || base === "manage") return null;
+
+  // Find classes
+  const classMatches = [...content.matchAll(/class\s+([A-Z]\w+)/g)];
+  const typeName = classMatches[0]?.[1] ?? capitalize(base);
+  const name = toKebab(stripPythonSuffix(typeName));
+  if (!name) return null;
+
+  // References: imports + class references
+  const refs = new Set<string>();
+  for (const match of content.matchAll(/from\s+\.\w*\s+import\s+(\w+)/g)) {
+    refs.add(match[1]);
+  }
+  for (const match of content.matchAll(/from\s+(\w+)\s+import/g)) {
+    refs.add(capitalize(match[1]));
+  }
+  for (const match of content.matchAll(/\b([A-Z][A-Za-z0-9]{2,})\b/g)) {
+    const ref = match[1];
+    if (ref !== typeName && !["True", "False", "None", "Exception", "TypeError", "ValueError", "KeyError", "AttributeError", "NotImplementedError", "RuntimeError", "OSError", "IOError"].includes(ref)) {
+      refs.add(ref);
+    }
+  }
+
+  const lines = content.split("\n").length;
+  const branches = countPatterns(content, [
+    /\bif\b/g, /\belif\b/g, /\belse\b/g, /\bfor\b/g,
+    /\bwhile\b/g, /\bexcept\b/g, /\btry\b/g,
+  ]);
+  // Python uses indentation not braces — estimate depth from leading whitespace
+  const depth = maxIndentDepth(content);
+
+  return {
+    path, name, typeName,
+    references: [...refs],
+    complexity: { lines, branches, depth, references: refs.size },
+  };
+}
+
+// ─── Java/Kotlin analyzer ───
+
+export async function analyzeJavaFile(path: string): Promise<FileNode | null> {
+  let content: string;
+  try {
+    content = await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+
+  const ext = extname(path);
+  const base = basename(path, ext);
+  if (base.endsWith("Test") || base.endsWith("Tests") || base.endsWith("Spec")) return null;
+
+  // Find the primary class/interface
+  const classPattern = ext === ".kt"
+    ? /(?:class|interface|object)\s+(\w+)/g
+    : /(?:public\s+)?(?:class|interface|enum)\s+(\w+)/g;
+  const typeMatches = [...content.matchAll(classPattern)];
+  const typeName = typeMatches[0]?.[1] ?? base;
+  const name = toKebab(stripJavaSuffix(typeName));
+  if (!name) return null;
+
+  // References: imports from same project + type usage
+  const refs = new Set<string>();
+  for (const match of content.matchAll(/import\s+[\w.]+\.([A-Z]\w+)\s*;/g)) {
+    refs.add(match[1]);
+  }
+  // Kotlin imports (no semicolons)
+  for (const match of content.matchAll(/import\s+[\w.]+\.([A-Z]\w+)\s*$/gm)) {
+    refs.add(match[1]);
+  }
+  for (const match of content.matchAll(/\b([A-Z][A-Za-z0-9]{2,})\b/g)) {
+    const ref = match[1];
+    if (ref !== typeName && !["String", "Integer", "Boolean", "Double", "Float", "Long", "Object", "List", "Map", "Set", "Array", "HashMap", "ArrayList", "Optional", "Stream", "Override", "Nullable", "NonNull", "Autowired", "Component", "Service", "Controller", "Repository", "Entity", "Table", "Column", "Inject", "Singleton", "Module"].includes(ref)) {
+      refs.add(ref);
+    }
+  }
+
+  const lines = content.split("\n").length;
+  const branches = countPatterns(content, [
+    /\bif\s*\(/g, /\bswitch\s*\(/g, /\bcase\b/g, /\belse\b/g,
+    /\bfor\s*\(/g, /\bwhile\s*\(/g, /\bcatch\s*\(/g,
+    /\bwhen\s*[({]/g, // Kotlin when
+  ]);
+  const depth = maxNestingDepth(content);
+
+  return {
+    path, name, typeName,
+    references: [...refs],
+    complexity: { lines, branches, depth, references: refs.size },
+  };
+}
+
+// ─── Vue SFC analyzer ───
+
+export async function analyzeVueFile(path: string): Promise<FileNode | null> {
+  let content: string;
+  try {
+    content = await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+
+  const base = basename(path, ".vue");
+  if (base.endsWith(".test") || base.endsWith(".spec") || base.endsWith(".stories")) return null;
+
+  const typeName = capitalize(base);
+  const name = toKebab(base);
+  if (!name) return null;
+
+  // References: components used in template + imports
+  const refs = new Set<string>();
+  // Template component references: <ComponentName or <component-name
+  for (const match of content.matchAll(/<([A-Z][A-Za-z0-9]+)/g)) {
+    if (match[1] !== typeName) refs.add(match[1]);
+  }
+  // kebab-case components in template — convert to PascalCase for matching
+  for (const match of content.matchAll(/<([a-z][a-z0-9]+-[a-z0-9-]+)/g)) {
+    const pascal = match[1].split("-").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join("");
+    refs.add(pascal);
+  }
+  // Script imports
+  for (const match of content.matchAll(/import\s+(?:\{[^}]*\}|(\w+))\s+from\s+["']([^"']+)["']/g)) {
+    if (match[1] && /^[A-Z]/.test(match[1])) refs.add(match[1]);
+  }
+
+  const lines = content.split("\n").length;
+  const branches = countPatterns(content, [
+    /\bv-if\b/g, /\bv-else-if\b/g, /\bv-else\b/g, /\bv-for\b/g,
+    /\bif\s*\(/g, /\bswitch\s*\(/g, /\?\s*[^?:]/g,
+  ]);
+  const depth = maxNestingDepth(content);
+
+  return {
+    path, name, typeName,
+    references: [...refs],
+    complexity: { lines, branches, depth, references: refs.size },
+  };
+}
+
+// ─── Ruby/Rails analyzer ───
+
+export async function analyzeRubyFile(path: string): Promise<FileNode | null> {
+  let content: string;
+  try {
+    content = await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+
+  const base = basename(path, ".rb");
+  if (base.endsWith("_test") || base.endsWith("_spec") || base === "application_controller" || base === "application_record" || base === "application_helper") return null;
+
+  // Find classes/modules
+  const classMatches = [...content.matchAll(/class\s+(\w+)/g)];
+  const moduleMatches = [...content.matchAll(/module\s+(\w+)/g)];
+  const typeName = classMatches[0]?.[1] ?? moduleMatches[0]?.[1] ?? capitalize(base);
+  const name = toKebab(stripRubySuffix(typeName));
+  if (!name) return null;
+
+  // References: other classes used
+  const refs = new Set<string>();
+  for (const match of content.matchAll(/\b([A-Z][A-Za-z0-9]{2,})\b/g)) {
+    const ref = match[1];
+    if (ref !== typeName && !["ActiveRecord", "ApplicationRecord", "ApplicationController", "ActionController", "ActiveModel", "ActiveSupport", "ActiveJob", "ActionMailer", "Rails", "Devise", "Pundit", "Sidekiq", "Redis", "Logger", "Integer", "String", "Array", "Hash", "Float", "Symbol", "Proc", "Thread", "Mutex", "OpenStruct", "Struct", "Enumerable", "Comparable", "Kernel", "Module", "Class", "Object", "NilClass", "TrueClass", "FalseClass", "StandardError", "RuntimeError", "ArgumentError", "TypeError", "NameError", "NoMethodError", "NotImplementedError"].includes(ref)) {
+      refs.add(ref);
+    }
+  }
+
+  const lines = content.split("\n").length;
+  const branches = countPatterns(content, [
+    /\bif\b/g, /\belsif\b/g, /\belse\b/g, /\bunless\b/g,
+    /\bcase\b/g, /\bwhen\b/g, /\brescue\b/g,
+    /\bdo\b/g, /\.each\b/g, /\.map\b/g,
+  ]);
+  const depth = maxIndentDepth(content);
+
+  return {
+    path, name, typeName,
+    references: [...refs],
+    complexity: { lines, branches, depth, references: refs.size },
+  };
+}
+
 // ─── Graph builder ───
 
 /** Names that are infrastructure/utility, not product areas */
@@ -493,6 +782,48 @@ function stripReactSuffix(name: string): string {
   return name;
 }
 
+function stripPythonSuffix(name: string): string {
+  const suffixes = [
+    "View", "ViewSet", "Serializer", "Model", "Form", "Admin",
+    "Manager", "Mixin", "Middleware", "Command", "Task", "Handler",
+    "Service", "Repository", "Factory", "Builder",
+  ];
+  for (const s of suffixes) {
+    if (name.length > s.length && name.endsWith(s)) return name.slice(0, -s.length);
+  }
+  return name;
+}
+
+function stripJavaSuffix(name: string): string {
+  const suffixes = [
+    "Controller", "Service", "ServiceImpl", "Repository", "RepositoryImpl",
+    "Component", "Configuration", "Config", "Factory", "Builder",
+    "Handler", "Listener", "Interceptor", "Filter", "Adapter",
+    "Converter", "Mapper", "DTO", "Entity", "Model",
+    "Activity", "Fragment", "ViewModel", "Presenter",
+  ];
+  for (const s of suffixes) {
+    if (name.length > s.length && name.endsWith(s)) return name.slice(0, -s.length);
+  }
+  return name;
+}
+
+function stripRubySuffix(name: string): string {
+  const suffixes = [
+    "Controller", "Model", "Mailer", "Job", "Worker",
+    "Service", "Serializer", "Decorator", "Presenter",
+    "Policy", "Form", "Query", "Validator",
+  ];
+  for (const s of suffixes) {
+    if (name.length > s.length && name.endsWith(s)) return name.slice(0, -s.length);
+  }
+  return name;
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function countPatterns(content: string, patterns: RegExp[]): number {
   let count = 0;
   for (const p of patterns) {
@@ -508,6 +839,18 @@ function maxNestingDepth(content: string): number {
   for (const char of content) {
     if (char === "{") { current++; if (current > max) max = current; }
     if (char === "}") current--;
+  }
+  return max;
+}
+
+/** For indentation-based languages (Python, Ruby) */
+function maxIndentDepth(content: string): number {
+  let max = 0;
+  for (const line of content.split("\n")) {
+    if (line.trim().length === 0) continue;
+    const spaces = line.match(/^(\s*)/)?.[1].length ?? 0;
+    const depth = Math.floor(spaces / 2); // 2-space or 4-space both work reasonably
+    if (depth > max) max = depth;
   }
   return max;
 }
