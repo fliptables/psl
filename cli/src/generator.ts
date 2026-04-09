@@ -88,56 +88,56 @@ export function generate(scan: ScanResult): string {
     lines.push("");
   }
 
-  // Usage examples
-  lines.push("## Usage Examples");
+  // Usage examples — pick areas that aren't the app entry point
+  const realAreas = scan.areas.filter(
+    (a) => !a.name.endsWith("-app") && a.name !== productName,
+  );
+  const firstArea = realAreas[0]?.name ?? "dashboard";
+  const secondArea = realAreas[1]?.name ?? "editor";
+  const firstChild = realAreas[0]?.children[0];
+  const concerns = scan.concerns;
+
+  lines.push("## How to Use");
   lines.push("");
-  lines.push("<!-- PSL tokens can be used anywhere — tickets, PRs, commits, Slack, agent prompts. -->");
-  lines.push("<!-- Edit these examples to match your team's actual workflow. -->");
+  lines.push("<!-- Use PSL tokens in braces anywhere — tickets, PRs, commits, Slack, agent prompts. -->");
+  lines.push("<!-- Edit these examples to match your team's workflow. -->");
   lines.push("");
 
-  // Pick real area names for examples
-  const areaNames = scan.areas.map((a) => a.name);
-  const firstArea = areaNames[0] ?? "dashboard";
-  const secondArea = areaNames[1] ?? "editor";
-  const firstChild = scan.areas[0]?.children[0];
-  const secondChild = scan.areas[1]?.children[0];
-  const concernNames = scan.concerns;
-
-  lines.push("**In tickets and issues:**");
+  lines.push("**Tickets & issues:**");
   lines.push("```");
-  lines.push(`[${productName}.${firstArea}.${concernNames[0]}] ${firstArea} feels sluggish when loading large datasets`);
+  lines.push(`{${productName}.${firstArea}.${concerns[0]}} — ${firstArea} feels sluggish when loading large datasets`);
   if (firstChild) {
-    lines.push(`[${productName}.${firstArea}.${concernNames[1]}.${firstChild}] ${firstChild} needs visual refresh`);
+    lines.push(`{${productName}.${firstArea}.${concerns[1]}.${firstChild}} — ${firstChild} needs visual refresh`);
   }
-  lines.push(`[${productName}.${secondArea}.${concernNames[2]}] app crashes on launch when ${secondArea} state is corrupted`);
+  lines.push(`{${productName}.${secondArea}.${concerns[2]}} — crashes on launch when ${secondArea} state is corrupted`);
   lines.push("```");
   lines.push("");
 
-  lines.push("**In commit messages:**");
+  lines.push("**Commits:**");
   lines.push("```");
-  lines.push(`fix(${firstArea}): resolve ${concernNames[0]} regression in ${firstChild ?? firstArea}`);
-  lines.push(`feat(${secondArea}): add keyboard navigation support`);
-  lines.push("```");
-  lines.push("");
-
-  lines.push("**In PR descriptions:**");
-  lines.push("```");
-  lines.push(`Addresses {${productName}.${firstArea}.${concernNames[0]}} — reduces render time by 40%.`);
-  lines.push(`Also fixes {${productName}.${secondArea}.${concernNames[3]}} edge case with empty state.`);
+  lines.push(`fix{${productName}.${firstArea}.${concerns[0]}}: resolve render regression in ${firstChild ?? firstArea}`);
+  lines.push(`feat{${productName}.${secondArea}}: add keyboard navigation`);
   lines.push("```");
   lines.push("");
 
-  lines.push("**In agent prompts:**");
+  lines.push("**PRs:**");
   lines.push("```");
-  lines.push(`Fix the {${productName}.${firstArea}.${concernNames[0]}} issue — the ${firstChild ?? firstArea} takes 3s to render.`);
-  lines.push(`Review {${productName}.${secondArea}} for ${concernNames[1]} inconsistencies.`);
+  lines.push(`Addresses {${productName}.${firstArea}.${concerns[0]}} — reduces render time by 40%.`);
+  lines.push(`Also fixes {${productName}.${secondArea}.${concerns[3]}} edge case with empty state.`);
   lines.push("```");
   lines.push("");
 
-  lines.push("**In Slack / chat:**");
+  lines.push("**Agent prompts:**");
   lines.push("```");
-  lines.push(`Heads up — {${productName}.${firstArea}} has a ${concernNames[0]} regression after the last deploy.`);
-  lines.push(`Can someone look at {${productName}.${secondArea}.${concernNames[2]}}? Users are reporting crashes.`);
+  lines.push(`Fix {${productName}.${firstArea}.${concerns[0]}} — the ${firstChild ?? firstArea} takes 3s to render.`);
+  lines.push(`Review {${productName}.${secondArea}} for ${concerns[1]} inconsistencies.`);
+  lines.push("```");
+  lines.push("");
+
+  lines.push("**Slack:**");
+  lines.push("```");
+  lines.push(`Heads up — {${productName}.${firstArea}} has a ${concerns[0]} regression after the last deploy.`);
+  lines.push(`Anyone looked at {${productName}.${secondArea}.${concerns[2]}}? Users reporting crashes.`);
   lines.push("```");
   lines.push("");
 

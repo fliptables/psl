@@ -370,10 +370,12 @@ export function graphToAreas(roots: GraphNode[]): {
   const areas: { name: string; children: string[]; complexity: number }[] = [];
   const seen = new Set<string>();
 
-  // Strategy: find the main layout container (highest child count among roots).
-  // Its direct children become the top-level product areas.
-  // The app entry (ScapeApp) becomes a separate area for app-level concerns.
+  // Strategy: app entries and layout containers are structural — they don't
+  // appear as areas. Instead, their significant children become top-level areas.
   // Everything else (orphan roots) gets listed if significant enough.
+
+  const isAppEntry = (n: GraphNode) =>
+    n.typeName.endsWith("App") || n.typeName === "ContentView";
 
   // Sort roots: layout containers first (most children), then app entries
   const sorted = [...roots].sort((a, b) => b.children.length - a.children.length);
@@ -381,9 +383,9 @@ export function graphToAreas(roots: GraphNode[]): {
   for (const root of sorted) {
     if (seen.has(root.name)) continue;
 
-    // Skip the layout container itself — promote its children
-    // Only the top 1-2 layout roots get promoted (the outermost containers)
-    if (root.children.length >= 4 && areas.length < 2) {
+    // App entries and layout containers: promote their children, skip the container
+    // App entries always promote; layout containers only if we haven't promoted too many
+    if (isAppEntry(root) || (root.children.length >= 4 && areas.length < 3)) {
       seen.add(root.name);
 
       for (const child of root.children) {

@@ -113,6 +113,16 @@ async function detectProductName(root: string): Promise<string | null> {
     if (match) return toKebabCase(match[1]) || null;
   } catch { /* no pyproject.toml */ }
 
+  // Try Xcode project name (strip .xcodeproj suffix)
+  try {
+    const entries = await readdir(root);
+    const xcodeproj = entries.find(e => e.endsWith(".xcodeproj"));
+    if (xcodeproj) {
+      const name = xcodeproj.replace(/\.xcodeproj$/, "");
+      return toKebabCase(name) || null;
+    }
+  } catch { /* no xcodeproj */ }
+
   // Try Gemfile (gem name from gemspec)
   try {
     const gemspecs = (await readdir(root)).filter(f => f.endsWith(".gemspec"));
