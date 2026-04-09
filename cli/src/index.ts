@@ -6,16 +6,22 @@ import { access, writeFile } from "node:fs/promises";
 import { scan } from "./scanner.js";
 import { generate } from "./generator.js";
 
+interface CliOptions {
+  path: string;
+  output: string;
+  force?: boolean;
+  verbose?: boolean;
+}
+
 program
   .name("psl-init")
   .description("Generate PSL.md for your project")
   .version("1.0.0")
   .option("--path <dir>", "project root directory", ".")
   .option("--output <file>", "output filename", "PSL.md")
-  .option("--git", "include git history scanning")
   .option("--force", "overwrite existing PSL.md without prompting")
   .option("--verbose", "show scanning details")
-  .action(async (options) => {
+  .action(async (options: CliOptions) => {
     const root = resolve(options.path);
     const outputPath = resolve(root, options.output);
 
@@ -36,7 +42,6 @@ program
       console.log(`Scanning ${root}...`);
 
       const result = await scan(root, {
-        git: options.git,
         verbose: options.verbose,
       });
 

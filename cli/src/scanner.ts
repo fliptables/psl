@@ -13,13 +13,13 @@ import {
   buildGraph,
   graphToMermaid,
   graphToAreas,
+  toKebab,
   type FileNode,
 } from "./analyzer.js";
 
 export interface AreaToken {
   name: string;
   children: string[];
-  source: "view" | "component" | "controller" | "directory" | "docs";
 }
 
 export interface ScanResult {
@@ -27,7 +27,6 @@ export interface ScanResult {
   projectType: ProjectType;
   areas: AreaToken[];
   concerns: string[];
-  vocabulary: Map<string, string[]>;
   mermaid: string;
 }
 
@@ -67,25 +66,6 @@ const SKIP_DIRS = new Set([
   "DerivedData", ".build", "target", "coverage", ".turbo", ".output",
 ]);
 
-function toKebabCase(name: string): string {
-  return name
-    .replace(/([a-z])([A-Z])/g, "$1-$2")
-    .replace(/[_\s]+/g, "-")
-    .replace(/[^a-z0-9-]/gi, "")
-    .toLowerCase()
-    .replace(/^-+|-+$/g, "");
-}
-
-/** Strip common suffixes to get the semantic name */
-function stripSuffix(name: string, suffixes: string[]): string {
-  for (const suffix of suffixes) {
-    if (name.length > suffix.length && name.endsWith(suffix)) {
-      return name.slice(0, -suffix.length);
-    }
-  }
-  return name;
-}
-
 async function loadGitignore(root: string): Promise<Ignore> {
   const ig = ignore();
   try {
@@ -105,7 +85,7 @@ async function detectProductName(root: string): Promise<string | null> {
     const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf-8"));
     if (pkg.name && typeof pkg.name === "string") {
       const name = pkg.name.replace(/^@[^/]+\//, "");
-      return toKebabCase(name) || null;
+      return toKebab(name) || null;
     }
   } catch { /* no package.json */ }
 
@@ -113,43 +93,45 @@ async function detectProductName(root: string): Promise<string | null> {
   try {
     const cargo = await readFile(join(root, "Cargo.toml"), "utf-8");
     const match = cargo.match(/name\s*=\s*"([^"]+)"/);
-    if (match) return toKebabCase(match[1]) || null;
+    if (match) return toKebab(match[1]) || null;
   } catch { /* no Cargo.toml */ }
 
   // Try pyproject.toml
   try {
     const pyproject = await readFile(join(root, "pyproject.toml"), "utf-8");
     const match = pyproject.match(/name\s*=\s*"([^"]+)"/);
-    if (match) return toKebabCase(match[1]) || null;
+    if (match) return toKebab(match[1]) || null;
   } catch { /* no pyproject.toml */ }
 
-  // Try Xcode project name (strip .xcodeproj suffix)
+  // Try Xcode project name
   try {
     const entries = await readdir(root);
     const xcodeproj = entries.find(e => e.endsWith(".xcodeproj"));
     if (xcodeproj) {
       const name = xcodeproj.replace(/\.xcodeproj$/, "");
-      return toKebabCase(name) || null;
+      return toKebab(name) || null;
     }
   } catch { /* no xcodeproj */ }
 
-  // Try Gemfile (gem name from gemspec)
+  // Try gemspec
   try {
-    const gemspecs = (await readdir(root)).filter(f => f.endsWith(".gemspec"));
+    const entries = await readdir(root);
+    const gemspecs = entries.filter(f => f.endsWith(".gemspec"));
     if (gemspecs.length > 0) {
       const content = await readFile(join(root, gemspecs[0]), "utf-8");
       const match = content.match(/\.name\s*=\s*["']([^"']+)["']/);
-      if (match) return toKebabCase(match[1]) || null;
+      if (match) return toKebab(match[1]) || null;
     }
   } catch { /* no gemspec */ }
 
   // Fallback to directory name
-  return toKebabCase(basename(root)) || null;
+  return toKebab(basename(root)) || null;
 }
 
 async function detectProjectType(root: string): Promise<ProjectType> {
-  // Swift / Xcode
   const entries = await readdir(root).catch(() => []);
+
+  // Swift / Xcode
   if (entries.some(e => e.endsWith(".xcodeproj") || e.endsWith(".xcworkspace"))) return "swift";
   if (await fileExists(join(root, "Package.swift"))) return "swift";
 
@@ -165,14 +147,13 @@ async function detectProjectType(root: string): Promise<ProjectType> {
   // Vue / Nuxt
   if (await fileExists(join(root, "nuxt.config.ts")) || await fileExists(join(root, "nuxt.config.js"))) return "vue";
   if (entries.some(e => e === "vue.config.js" || e === "vite.config.ts")) {
-    // Check if it's Vue specifically
     try {
       const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf-8"));
       if (pkg.dependencies?.vue || pkg.devDependencies?.vue) return "vue";
     } catch { /* not vue */ }
   }
 
-  // React (check after Next.js since Next is React-based)
+  // React
   try {
     const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf-8"));
     if (pkg.dependencies?.react || pkg.devDependencies?.react) return "react";
@@ -184,23 +165,24 @@ async function detectProjectType(root: string): Promise<ProjectType> {
   // Rust
   if (await fileExists(join(root, "Cargo.toml"))) return "rust";
 
-  // Java / Kotlin (Spring Boot, Android, general)
+  // Java / Kotlin
   if (await fileExists(join(root, "build.gradle")) || await fileExists(join(root, "build.gradle.kts")) || await fileExists(join(root, "pom.xml"))) {
-    // Check for Kotlin
     const hasKotlin = entries.some(e => e === "build.gradle.kts") || await fileExists(join(root, "src", "main", "kotlin"));
     return hasKotlin ? "kotlin" : "java";
   }
 
-  // Ruby (non-Rails — Rails was already caught above)
+  // Ruby (non-Rails)
   if (await fileExists(join(root, "Gemfile")) || entries.some(e => e.endsWith(".gemspec"))) return "ruby";
 
-  // Python (non-Django — Django was already caught above)
+  // Python (non-Django)
   if (await fileExists(join(root, "pyproject.toml")) || await fileExists(join(root, "setup.py")) || await fileExists(join(root, "requirements.txt"))) return "python";
 
   return "generic";
 }
 
-// ─── Framework-specific scanners ───
+// ─── File collection ───
+
+const MAX_FILES = 800;
 
 async function collectFiles(
   dir: string,
@@ -209,25 +191,24 @@ async function collectFiles(
   extensions: Set<string>,
   maxDepth: number,
   depth = 0,
+  results: string[] = [],
 ): Promise<string[]> {
-  if (depth > maxDepth) return [];
-  const results: string[] = [];
+  if (depth > maxDepth || results.length >= MAX_FILES) return results;
 
   try {
     const d = await opendir(dir);
     for await (const entry of d) {
+      if (results.length >= MAX_FILES) break;
       if (entry.name.startsWith(".")) continue;
       if (SKIP_DIRS.has(entry.name)) continue;
       if (isSensitive(entry.name)) continue;
 
       const fullPath = join(dir, entry.name);
       const relPath = fullPath.slice(root.length + 1);
-
       if (ig.ignores(relPath)) continue;
 
       if (entry.isDirectory()) {
-        const children = await collectFiles(fullPath, ig, root, extensions, maxDepth, depth + 1);
-        results.push(...children);
+        await collectFiles(fullPath, ig, root, extensions, maxDepth, depth + 1, results);
       } else if (entry.isFile() && extensions.has(extname(entry.name))) {
         results.push(fullPath);
       }
@@ -237,88 +218,72 @@ async function collectFiles(
   return results;
 }
 
-async function scanSwift(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
-  const swiftFiles = await collectFiles(root, ig, root, new Set([".swift"]), 5);
+// ─── Parallel file analysis ───
 
-  if (verbose) console.log(`Scanning ${swiftFiles.length} Swift files...`);
+async function analyzeFilesParallel<T>(
+  files: string[],
+  analyze: (path: string) => Promise<T | null>,
+  concurrency = 16,
+): Promise<T[]> {
+  const results: T[] = [];
+  let i = 0;
+  const workers = Array.from({ length: Math.min(concurrency, files.length) }, async () => {
+    while (i < files.length) {
+      const file = files[i++];
+      const result = await analyze(file);
+      if (result) results.push(result);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
-  // Analyze each file for type declarations, references, and complexity
-  const nodes: FileNode[] = [];
-  for (const file of swiftFiles) {
-    const node = await analyzeSwiftFile(file);
-    if (node) nodes.push(node);
-  }
+// ─── Graph-based scanner (shared across all graph-analyzed languages) ───
 
-  if (verbose) console.log(`Analyzed ${nodes.length} view/controller files`);
+interface GraphScanResult {
+  areas: AreaToken[];
+  mermaid: string;
+}
 
-  // Build dependency graph and walk from entry points
+async function scanWithGraph(
+  root: string,
+  ig: Ignore,
+  verbose: boolean,
+  extensions: Set<string>,
+  analyzer: (path: string) => Promise<FileNode | null>,
+  label: string,
+  maxDepth = 5,
+): Promise<GraphScanResult> {
+  const files = await collectFiles(root, ig, root, extensions, maxDepth);
+  if (verbose) console.log(`Scanning ${files.length} ${label} files...`);
+
+  const nodes = await analyzeFilesParallel(files, analyzer);
+  if (verbose) console.log(`Analyzed ${nodes.length} ${label} types`);
+
   const { roots } = buildGraph(nodes);
 
   if (verbose) {
-    console.log(`Found ${roots.length} root nodes (entry points)`);
+    console.log(`Found ${roots.length} root nodes`);
     for (const r of roots.slice(0, 5)) {
       console.log(`  ${r.typeName}: ${r.complexity.branches} branches, ${r.children.length} children`);
     }
   }
 
-  // Generate mermaid from graph
-  const productName = basename(root);
-  const mermaid = graphToMermaid(toKebabCase(productName) || "app", roots);
-
-  // Convert graph to PSL areas
+  const productName = toKebab(basename(root)) || "app";
+  const mermaid = graphToMermaid(productName, roots);
   const graphAreas = graphToAreas(roots);
-  const areas: AreaToken[] = graphAreas.map((a) => ({
-    name: a.name,
-    children: a.children,
-    source: "view" as const,
-  }));
 
-  return { areas, mermaid };
+  return {
+    areas: graphAreas.map((a) => ({ name: a.name, children: a.children })),
+    mermaid,
+  };
 }
 
-async function scanReact(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
-  const extensions = new Set([".tsx", ".jsx"]);
-  const componentFiles = await collectFiles(root, ig, root, extensions, 5);
+// ─── Next.js route scanner (routes only, no component analysis) ───
 
-  if (verbose) console.log(`Scanning ${componentFiles.length} React/TSX files...`);
-
-  // Analyze each file
-  const nodes: FileNode[] = [];
-  for (const file of componentFiles) {
-    const node = await analyzeReactFile(file);
-    if (node) nodes.push(node);
-  }
-
-  if (verbose) console.log(`Analyzed ${nodes.length} component files`);
-
-  // Build dependency graph
-  const { roots } = buildGraph(nodes);
-
-  if (verbose) {
-    console.log(`Found ${roots.length} root components`);
-    for (const r of roots.slice(0, 5)) {
-      console.log(`  ${r.typeName}: ${r.complexity.branches} branches, ${r.children.length} children`);
-    }
-  }
-
-  const productName = basename(root);
-  const mermaid = graphToMermaid(toKebabCase(productName) || "app", roots);
-
-  const graphAreas = graphToAreas(roots);
-  const areas: AreaToken[] = graphAreas.map((a) => ({
-    name: a.name,
-    children: a.children,
-    source: "component" as const,
-  }));
-
-  return { areas, mermaid };
-}
-
-async function scanNextjs(root: string, ig: Ignore, verbose: boolean): Promise<AreaToken[]> {
-  // Next.js has app/ or pages/ directory as the primary routing structure
+async function scanNextjsRoutes(root: string, ig: Ignore, verbose: boolean): Promise<AreaToken[]> {
   const areas: AreaToken[] = [];
 
-  // Scan app/ directory for route segments
   for (const routeDir of ["app", "src/app", "pages", "src/pages"]) {
     const fullPath = join(root, routeDir);
     if (!(await fileExists(fullPath))) continue;
@@ -328,243 +293,40 @@ async function scanNextjs(root: string, ig: Ignore, verbose: boolean): Promise<A
       for await (const entry of d) {
         if (!entry.isDirectory()) continue;
         if (entry.name.startsWith(".") || entry.name.startsWith("_") || entry.name.startsWith("(")) continue;
+
         if (entry.name === "api") {
-          // API routes are their own area
-          areas.push({ name: "api", children: [], source: "directory" });
+          areas.push({ name: "api", children: [] });
           continue;
         }
 
-        const kebab = toKebabCase(entry.name);
+        const kebab = toKebab(entry.name);
         if (!kebab) continue;
 
-        // Scan sub-routes
         const children: string[] = [];
         try {
           const subDir = await opendir(join(fullPath, entry.name));
           for await (const sub of subDir) {
             if (sub.isDirectory() && !sub.name.startsWith("_") && !sub.name.startsWith("(")) {
-              const childKebab = toKebabCase(sub.name);
+              const childKebab = toKebab(sub.name);
               if (childKebab) children.push(childKebab);
             }
           }
         } catch { /* can't read */ }
 
-        areas.push({ name: kebab, children: children.slice(0, 15), source: "directory" });
+        areas.push({ name: kebab, children: children.slice(0, 15) });
       }
     } catch { /* can't read */ }
   }
 
-  // Also scan components via graph analysis
-  const componentResult = await scanReact(root, ig, verbose);
-  areas.push(...componentResult.areas);
-
+  if (verbose) console.log(`Found ${areas.length} Next.js routes`);
   return areas;
 }
 
-async function scanRails(root: string, ig: Ignore, verbose: boolean): Promise<AreaToken[]> {
+// ─── Generic directory scanner (fallback) ───
+
+async function scanGeneric(root: string, ig: Ignore, verbose: boolean): Promise<GraphScanResult> {
   const areas: AreaToken[] = [];
 
-  // Scan controllers for product areas
-  const controllerDir = join(root, "app", "controllers");
-  if (await fileExists(controllerDir)) {
-    const files = await collectFiles(controllerDir, ig, root, new Set([".rb"]), 3);
-    for (const file of files) {
-      const base = basename(file, ".rb");
-      if (base === "application_controller") continue;
-      const semantic = stripSuffix(base, ["_controller"]);
-      const kebab = toKebabCase(semantic);
-      if (kebab && kebab.length > 1) {
-        areas.push({ name: kebab, children: [], source: "controller" });
-      }
-    }
-  }
-
-  // Scan models for data areas
-  const modelDir = join(root, "app", "models");
-  if (await fileExists(modelDir)) {
-    const files = await collectFiles(modelDir, ig, root, new Set([".rb"]), 2);
-    const modelNames: string[] = [];
-    for (const file of files) {
-      const base = basename(file, ".rb");
-      if (base === "application_record" || base === "concerns") continue;
-      const kebab = toKebabCase(base);
-      if (kebab && kebab.length > 1) modelNames.push(kebab);
-    }
-
-    // Add models as children of existing controller areas or as standalone
-    for (const area of areas) {
-      const related = modelNames.filter(m => area.name.includes(m) || m.includes(area.name));
-      area.children.push(...related);
-    }
-  }
-
-  if (verbose) console.log(`Found ${areas.length} Rails controllers`);
-  return areas;
-}
-
-async function scanDjango(root: string, ig: Ignore, verbose: boolean): Promise<AreaToken[]> {
-  const areas: AreaToken[] = [];
-
-  // Find Django apps (directories with views.py)
-  const pyFiles = await collectFiles(root, ig, root, new Set([".py"]), 3);
-  const appDirs = new Set<string>();
-
-  for (const file of pyFiles) {
-    if (basename(file) === "views.py" || basename(file) === "models.py") {
-      const parts = file.slice(root.length + 1).split("/");
-      if (parts.length >= 2) {
-        appDirs.add(parts[parts.length - 2]);
-      }
-    }
-  }
-
-  for (const dir of appDirs) {
-    const kebab = toKebabCase(dir);
-    if (kebab && kebab.length > 1) {
-      areas.push({ name: kebab, children: [], source: "directory" });
-    }
-  }
-
-  if (verbose) console.log(`Found ${areas.length} Django apps`);
-  return areas;
-}
-
-async function scanGo(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
-  const goFiles = await collectFiles(root, ig, root, new Set([".go"]), 5);
-  if (verbose) console.log(`Scanning ${goFiles.length} Go files...`);
-
-  const nodes: FileNode[] = [];
-  for (const file of goFiles) {
-    const node = await analyzeGoFile(file);
-    if (node) nodes.push(node);
-  }
-  if (verbose) console.log(`Analyzed ${nodes.length} Go types`);
-
-  const { roots } = buildGraph(nodes);
-  const productName = toKebabCase(basename(root)) || "app";
-  const mermaid = graphToMermaid(productName, roots);
-  const graphAreas = graphToAreas(roots);
-  return {
-    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "view" as const })),
-    mermaid,
-  };
-}
-
-async function scanRust(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
-  const rsFiles = await collectFiles(root, ig, root, new Set([".rs"]), 5);
-  if (verbose) console.log(`Scanning ${rsFiles.length} Rust files...`);
-
-  const nodes: FileNode[] = [];
-  for (const file of rsFiles) {
-    const node = await analyzeRustFile(file);
-    if (node) nodes.push(node);
-  }
-  if (verbose) console.log(`Analyzed ${nodes.length} Rust types`);
-
-  const { roots } = buildGraph(nodes);
-  const productName = toKebabCase(basename(root)) || "app";
-  const mermaid = graphToMermaid(productName, roots);
-  const graphAreas = graphToAreas(roots);
-  return {
-    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "view" as const })),
-    mermaid,
-  };
-}
-
-async function scanPython(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
-  const pyFiles = await collectFiles(root, ig, root, new Set([".py"]), 5);
-  if (verbose) console.log(`Scanning ${pyFiles.length} Python files...`);
-
-  const nodes: FileNode[] = [];
-  for (const file of pyFiles) {
-    const node = await analyzePythonFile(file);
-    if (node) nodes.push(node);
-  }
-  if (verbose) console.log(`Analyzed ${nodes.length} Python modules`);
-
-  const { roots } = buildGraph(nodes);
-  const productName = toKebabCase(basename(root)) || "app";
-  const mermaid = graphToMermaid(productName, roots);
-  const graphAreas = graphToAreas(roots);
-  return {
-    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "view" as const })),
-    mermaid,
-  };
-}
-
-async function scanJava(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
-  const javaFiles = await collectFiles(root, ig, root, new Set([".java", ".kt"]), 6);
-  if (verbose) console.log(`Scanning ${javaFiles.length} Java/Kotlin files...`);
-
-  const nodes: FileNode[] = [];
-  for (const file of javaFiles) {
-    const node = await analyzeJavaFile(file);
-    if (node) nodes.push(node);
-  }
-  if (verbose) console.log(`Analyzed ${nodes.length} Java/Kotlin types`);
-
-  const { roots } = buildGraph(nodes);
-  const productName = toKebabCase(basename(root)) || "app";
-  const mermaid = graphToMermaid(productName, roots);
-  const graphAreas = graphToAreas(roots);
-  return {
-    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "view" as const })),
-    mermaid,
-  };
-}
-
-async function scanVue(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
-  const vueFiles = await collectFiles(root, ig, root, new Set([".vue"]), 5);
-  // Also include TS/JS files that might be composables/stores
-  const tsFiles = await collectFiles(root, ig, root, new Set([".ts", ".tsx"]), 5);
-  if (verbose) console.log(`Scanning ${vueFiles.length} Vue SFCs + ${tsFiles.length} TS files...`);
-
-  const nodes: FileNode[] = [];
-  for (const file of vueFiles) {
-    const node = await analyzeVueFile(file);
-    if (node) nodes.push(node);
-  }
-  for (const file of tsFiles) {
-    const node = await analyzeReactFile(file); // TSX analysis works for TS too
-    if (node) nodes.push(node);
-  }
-  if (verbose) console.log(`Analyzed ${nodes.length} Vue/TS components`);
-
-  const { roots } = buildGraph(nodes);
-  const productName = toKebabCase(basename(root)) || "app";
-  const mermaid = graphToMermaid(productName, roots);
-  const graphAreas = graphToAreas(roots);
-  return {
-    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "component" as const })),
-    mermaid,
-  };
-}
-
-async function scanRuby(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
-  const rbFiles = await collectFiles(root, ig, root, new Set([".rb"]), 5);
-  if (verbose) console.log(`Scanning ${rbFiles.length} Ruby files...`);
-
-  const nodes: FileNode[] = [];
-  for (const file of rbFiles) {
-    const node = await analyzeRubyFile(file);
-    if (node) nodes.push(node);
-  }
-  if (verbose) console.log(`Analyzed ${nodes.length} Ruby classes`);
-
-  const { roots } = buildGraph(nodes);
-  const productName = toKebabCase(basename(root)) || "app";
-  const mermaid = graphToMermaid(productName, roots);
-  const graphAreas = graphToAreas(roots);
-  return {
-    areas: graphAreas.map((a) => ({ name: a.name, children: a.children, source: "view" as const })),
-    mermaid,
-  };
-}
-
-async function scanGeneric(root: string, ig: Ignore, verbose: boolean): Promise<AreaToken[]> {
-  const areas: AreaToken[] = [];
-
-  // Only use top-level source directories, skip infrastructure
   const infraDirs = new Set([
     ...SKIP_DIRS, "docs", "scripts", "test", "tests", "spec", "specs",
     "config", "public", "static", "assets", "migrations", "fixtures",
@@ -579,7 +341,7 @@ async function scanGeneric(root: string, ig: Ignore, verbose: boolean): Promise<
       if (infraDirs.has(entry.name.toLowerCase())) continue;
       if (ig.ignores(entry.name + "/")) continue;
 
-      const kebabName = toKebabCase(entry.name);
+      const kebabName = toKebab(entry.name);
       if (!kebabName || kebabName.length < 2) continue;
 
       const children: string[] = [];
@@ -589,7 +351,7 @@ async function scanGeneric(root: string, ig: Ignore, verbose: boolean): Promise<
           if (subEntry.name.startsWith(".")) continue;
           if (SKIP_DIRS.has(subEntry.name)) continue;
           if (subEntry.isDirectory()) {
-            const childName = toKebabCase(subEntry.name);
+            const childName = toKebab(subEntry.name);
             if (childName && childName.length > 1) children.push(childName);
           }
         }
@@ -598,67 +360,32 @@ async function scanGeneric(root: string, ig: Ignore, verbose: boolean): Promise<
       areas.push({
         name: kebabName,
         children: [...new Set(children)].slice(0, 10),
-        source: "directory",
       });
     }
   } catch { /* can't read root */ }
 
-  return areas;
-}
-
-// ─── Docs scanner ───
-
-async function scanExistingDocs(
-  root: string,
-): Promise<{ vocabulary: Map<string, string[]> }> {
-  const vocabulary = new Map<string, string[]>();
-
-  const docPaths = [
-    "CLAUDE.md", "AGENTS.md",
-    "docs/design-system/vocabulary.md", "docs/vocabulary.md",
-  ];
-
-  for (const docPath of docPaths) {
-    try {
-      const content = await readFile(join(root, docPath), "utf-8");
-      const boldTerms = content.matchAll(/\*\*([A-Za-z][A-Za-z0-9 -]+)\*\*/g);
-      for (const match of boldTerms) {
-        const term = toKebabCase(match[1]);
-        if (term && term.length > 1 && term.length < 30) {
-          if (!vocabulary.has(term)) vocabulary.set(term, []);
-        }
-      }
-    } catch { /* file not found */ }
-  }
-
-  return { vocabulary };
-}
-
-// ─── Mermaid diagram generator ───
-
-function generateMermaid(productName: string, areas: AreaToken[]): string {
+  // Generate flat mermaid for generic projects
+  const productName = toKebab(basename(root)) || "app";
   const lines: string[] = ["graph TD"];
-  const root = productName.replace(/-/g, "_");
-  lines.push(`  ${root}[${productName}]`);
-
+  const rootId = productName.replace(/-/g, "_");
+  lines.push(`  ${rootId}[${productName}]`);
   for (const area of areas) {
-    const areaId = `${root}_${area.name.replace(/-/g, "_")}`;
-    lines.push(`  ${root} --> ${areaId}[${area.name}]`);
-
+    const areaId = `${rootId}_${area.name.replace(/-/g, "_")}`;
+    lines.push(`  ${rootId} --> ${areaId}[${area.name}]`);
     for (const child of area.children.slice(0, 8)) {
       const childId = `${areaId}_${child.replace(/-/g, "_")}`;
       lines.push(`  ${areaId} --> ${childId}[${child}]`);
     }
   }
 
-  return lines.join("\n");
+  return { areas, mermaid: lines.join("\n") };
 }
 
 // ─── Main scan function ───
 
 export async function scan(
   root: string,
-  options: { git?: boolean; verbose?: boolean } = {},
+  options: { verbose?: boolean } = {},
 ): Promise<ScanResult> {
   await stat(root).catch(() => { throw new Error(`Path does not exist: ${root}`); });
 
@@ -672,104 +399,63 @@ export async function scan(
     console.log(`Project type: ${projectType}`);
   }
 
-  // Use framework-specific scanner
-  let areas: AreaToken[];
-  let mermaid: string;
-  const name = productName ?? "myapp";
+  const verbose = !!options.verbose;
+  let result: GraphScanResult;
 
   switch (projectType) {
-    case "swift": {
-      const result = await scanSwift(root, ig, !!options.verbose);
-      areas = result.areas;
-      mermaid = result.mermaid;
+    case "swift":
+      result = await scanWithGraph(root, ig, verbose, new Set([".swift"]), analyzeSwiftFile, "Swift");
       break;
-    }
-    case "react": {
-      const result = await scanReact(root, ig, !!options.verbose);
-      areas = result.areas;
-      mermaid = result.mermaid;
+    case "react":
+      result = await scanWithGraph(root, ig, verbose, new Set([".tsx", ".jsx"]), analyzeReactFile, "React");
       break;
-    }
     case "nextjs": {
-      // Next.js: use graph analysis for components + route scanning
-      const reactResult = await scanReact(root, ig, !!options.verbose);
-      const routeAreas = await scanNextjs(root, ig, !!options.verbose);
-      areas = [...routeAreas, ...reactResult.areas];
-      mermaid = reactResult.mermaid || generateMermaid(name, areas);
+      const reactResult = await scanWithGraph(root, ig, verbose, new Set([".tsx", ".jsx"]), analyzeReactFile, "React");
+      const routeAreas = await scanNextjsRoutes(root, ig, verbose);
+      result = {
+        areas: [...routeAreas, ...reactResult.areas],
+        mermaid: reactResult.mermaid,
+      };
       break;
     }
-    case "rails": {
-      const result = await scanRuby(root, ig, !!options.verbose);
-      areas = result.areas;
-      mermaid = result.mermaid;
+    case "rails":
+    case "ruby":
+      result = await scanWithGraph(root, ig, verbose, new Set([".rb"]), analyzeRubyFile, "Ruby");
       break;
-    }
-    case "ruby": {
-      const result = await scanRuby(root, ig, !!options.verbose);
-      areas = result.areas;
-      mermaid = result.mermaid;
+    case "django":
+    case "python":
+      result = await scanWithGraph(root, ig, verbose, new Set([".py"]), analyzePythonFile, "Python");
       break;
-    }
-    case "django": {
-      const result = await scanPython(root, ig, !!options.verbose);
-      areas = result.areas;
-      mermaid = result.mermaid;
+    case "go":
+      result = await scanWithGraph(root, ig, verbose, new Set([".go"]), analyzeGoFile, "Go");
       break;
-    }
-    case "python": {
-      const result = await scanPython(root, ig, !!options.verbose);
-      areas = result.areas;
-      mermaid = result.mermaid;
+    case "rust":
+      result = await scanWithGraph(root, ig, verbose, new Set([".rs"]), analyzeRustFile, "Rust");
       break;
-    }
-    case "go": {
-      const result = await scanGo(root, ig, !!options.verbose);
-      areas = result.areas;
-      mermaid = result.mermaid;
-      break;
-    }
-    case "rust": {
-      const result = await scanRust(root, ig, !!options.verbose);
-      areas = result.areas;
-      mermaid = result.mermaid;
-      break;
-    }
     case "java":
-    case "kotlin": {
-      const result = await scanJava(root, ig, !!options.verbose);
-      areas = result.areas;
-      mermaid = result.mermaid;
+    case "kotlin":
+      result = await scanWithGraph(root, ig, verbose, new Set([".java", ".kt"]), analyzeJavaFile, "Java/Kotlin", 6);
       break;
-    }
-    case "vue": {
-      const result = await scanVue(root, ig, !!options.verbose);
-      areas = result.areas;
-      mermaid = result.mermaid;
+    case "vue":
+      result = await scanWithGraph(root, ig, verbose, new Set([".vue", ".ts", ".tsx"]), (path) => {
+        return extname(path) === ".vue" ? analyzeVueFile(path) : analyzeReactFile(path);
+      }, "Vue");
       break;
-    }
-    default: {
-      areas = await scanGeneric(root, ig, !!options.verbose);
-      mermaid = generateMermaid(name, areas);
-    }
+    default:
+      result = await scanGeneric(root, ig, verbose);
   }
 
-  // Also scan existing docs for vocabulary
-  const docResult = await scanExistingDocs(root);
-
-  // Default concerns
   const concerns = ["performance", "visual", "crash", "ux", "data", "lifecycle"];
 
   if (options.verbose) {
-    console.log(`Found ${areas.length} areas`);
-    console.log(`Vocabulary terms: ${docResult.vocabulary.size}`);
+    console.log(`Found ${result.areas.length} areas`);
   }
 
   return {
     productName,
     projectType,
-    areas,
+    areas: result.areas,
     concerns,
-    vocabulary: docResult.vocabulary,
-    mermaid,
+    mermaid: result.mermaid,
   };
 }

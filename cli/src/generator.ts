@@ -63,30 +63,17 @@ export function generate(scan: ScanResult): string {
   lines.push("");
 
   // Aliases YAML block
-  const aliasEntries: string[] = [];
+  lines.push("## Aliases");
+  lines.push("");
+  lines.push("```yaml");
   for (const concern of scan.concerns) {
     const aliases = concernAliases[concern];
     if (aliases) {
-      aliasEntries.push(`${concern}: [${aliases.join(", ")}]`);
+      lines.push(`${concern}: [${aliases.join(", ")}]`);
     }
   }
-  // Add area aliases if any areas have aka annotations (from docs scanning)
-  for (const [canonical, aliases] of scan.vocabulary) {
-    if (aliases.length > 0) {
-      aliasEntries.push(`${canonical}: [${aliases.join(", ")}]`);
-    }
-  }
-
-  if (aliasEntries.length > 0) {
-    lines.push("## Aliases");
-    lines.push("");
-    lines.push("```yaml");
-    for (const entry of aliasEntries) {
-      lines.push(entry);
-    }
-    lines.push("```");
-    lines.push("");
-  }
+  lines.push("```");
+  lines.push("");
 
   // Usage examples — pick areas that aren't the app entry point
   const realAreas = scan.areas.filter(
@@ -105,39 +92,39 @@ export function generate(scan: ScanResult): string {
 
   lines.push("**Tickets & issues:**");
   lines.push("```");
-  lines.push(`{${productName}.${firstArea}.${concerns[0]}} — ${firstArea} feels sluggish when loading large datasets`);
+  lines.push(`{${productName}.${firstArea}.${concerns[0] ?? "performance"}} — ${firstArea} feels sluggish when loading large datasets`);
   if (firstChild) {
-    lines.push(`{${productName}.${firstArea}.${concerns[1]}.${firstChild}} — ${firstChild} needs visual refresh`);
+    lines.push(`{${productName}.${firstArea}.${concerns[1] ?? "visual"}.${firstChild}} — ${firstChild} needs visual refresh`);
   }
-  lines.push(`{${productName}.${secondArea}.${concerns[2]}} — crashes on launch when ${secondArea} state is corrupted`);
+  lines.push(`{${productName}.${secondArea}.${concerns[2] ?? "crash"}} — crashes on launch when ${secondArea} state is corrupted`);
   lines.push("```");
   lines.push("");
 
   lines.push("**Commits:**");
   lines.push("```");
-  lines.push(`fix{${productName}.${firstArea}.${concerns[0]}}: resolve render regression in ${firstChild ?? firstArea}`);
+  lines.push(`fix{${productName}.${firstArea}.${concerns[0] ?? "performance"}}: resolve render regression in ${firstChild ?? firstArea}`);
   lines.push(`feat{${productName}.${secondArea}}: add keyboard navigation`);
   lines.push("```");
   lines.push("");
 
   lines.push("**PRs:**");
   lines.push("```");
-  lines.push(`Addresses {${productName}.${firstArea}.${concerns[0]}} — reduces render time by 40%.`);
-  lines.push(`Also fixes {${productName}.${secondArea}.${concerns[3]}} edge case with empty state.`);
+  lines.push(`Addresses {${productName}.${firstArea}.${concerns[0] ?? "performance"}} — reduces render time by 40%.`);
+  lines.push(`Also fixes {${productName}.${secondArea}.${concerns[3] ?? "ux"}} edge case with empty state.`);
   lines.push("```");
   lines.push("");
 
   lines.push("**Agent prompts:**");
   lines.push("```");
-  lines.push(`Fix {${productName}.${firstArea}.${concerns[0]}} — the ${firstChild ?? firstArea} takes 3s to render.`);
-  lines.push(`Review {${productName}.${secondArea}} for ${concerns[1]} inconsistencies.`);
+  lines.push(`Fix {${productName}.${firstArea}.${concerns[0] ?? "performance"}} — the ${firstChild ?? firstArea} takes 3s to render.`);
+  lines.push(`Review {${productName}.${secondArea}} for ${concerns[1] ?? "visual"} inconsistencies.`);
   lines.push("```");
   lines.push("");
 
   lines.push("**Slack:**");
   lines.push("```");
-  lines.push(`Heads up — {${productName}.${firstArea}} has a ${concerns[0]} regression after the last deploy.`);
-  lines.push(`Anyone looked at {${productName}.${secondArea}.${concerns[2]}}? Users reporting crashes.`);
+  lines.push(`Heads up — {${productName}.${firstArea}} has a ${concerns[0] ?? "performance"} regression after the last deploy.`);
+  lines.push(`Anyone looked at {${productName}.${secondArea}.${concerns[2] ?? "crash"}}? Users reporting crashes.`);
   lines.push("```");
   lines.push("");
 
