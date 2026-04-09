@@ -1,6 +1,14 @@
 import { opendir, readFile, readdir, stat } from "node:fs/promises";
 import { join, basename, extname } from "node:path";
 import ignore, { type Ignore } from "ignore";
+import {
+  analyzeSwiftFile,
+  analyzeReactFile,
+  buildGraph,
+  graphToMermaid,
+  graphToAreas,
+  type FileNode,
+} from "./analyzer.js";
 
 export interface AreaToken {
   name: string;
@@ -196,92 +204,81 @@ async function collectFiles(
   return results;
 }
 
-async function scanSwift(root: string, ig: Ignore, verbose: boolean): Promise<AreaToken[]> {
-  const viewFiles = await collectFiles(root, ig, root, new Set([".swift"]), 5);
+async function scanSwift(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
+  const swiftFiles = await collectFiles(root, ig, root, new Set([".swift"]), 5);
 
-  // Find files with "View" in name — these are the product surfaces
-  const viewNames: { name: string; dir: string }[] = [];
-  for (const file of viewFiles) {
-    const base = basename(file, ".swift");
-    if (!base.includes("View") && !base.includes("Controller")) continue;
+  if (verbose) console.log(`Scanning ${swiftFiles.length} Swift files...`);
 
-    const semantic = stripSuffix(base, [
-      "ViewController", "OutlineView", "SplitView", "EditorView",
-      "PanelView", "BrowserView", "ListView", "TreeView",
-      "CardView", "DetailView", "PickerView", "BarView",
-      "View", "Controller",
-    ]);
-
-    const kebab = toKebabCase(semantic);
-    if (!kebab || kebab.length < 2) continue;
-
-    // Get the parent directory as grouping context
-    const parts = file.slice(root.length + 1).split("/");
-    const dir = parts.length > 2 ? parts[parts.length - 2] : parts[0];
-
-    viewNames.push({ name: kebab, dir });
+  // Analyze each file for type declarations, references, and complexity
+  const nodes: FileNode[] = [];
+  for (const file of swiftFiles) {
+    const node = await analyzeSwiftFile(file);
+    if (node) nodes.push(node);
   }
 
-  if (verbose) console.log(`Found ${viewNames.length} Swift views/controllers`);
+  if (verbose) console.log(`Analyzed ${nodes.length} view/controller files`);
 
-  // Group by directory to form areas
-  const groups = new Map<string, string[]>();
-  for (const { name, dir } of viewNames) {
-    const groupKey = toKebabCase(dir);
-    if (!groupKey) continue;
-    const existing = groups.get(groupKey) ?? [];
-    if (!existing.includes(name)) existing.push(name);
-    groups.set(groupKey, existing);
+  // Build dependency graph and walk from entry points
+  const { roots } = buildGraph(nodes);
+
+  if (verbose) {
+    console.log(`Found ${roots.length} root nodes (entry points)`);
+    for (const r of roots.slice(0, 5)) {
+      console.log(`  ${r.typeName}: ${r.complexity.branches} branches, ${r.children.length} children`);
+    }
   }
 
-  return [...groups.entries()].map(([name, children]) => ({
-    name,
-    children: children.slice(0, 15),
+  // Generate mermaid from graph
+  const productName = basename(root);
+  const mermaid = graphToMermaid(toKebabCase(productName) || "app", roots);
+
+  // Convert graph to PSL areas
+  const graphAreas = graphToAreas(roots);
+  const areas: AreaToken[] = graphAreas.map((a) => ({
+    name: a.name,
+    children: a.children,
     source: "view" as const,
   }));
+
+  return { areas, mermaid };
 }
 
-async function scanReact(root: string, ig: Ignore, verbose: boolean): Promise<AreaToken[]> {
+async function scanReact(root: string, ig: Ignore, verbose: boolean): Promise<{ areas: AreaToken[]; mermaid: string }> {
   const extensions = new Set([".tsx", ".jsx"]);
   const componentFiles = await collectFiles(root, ig, root, extensions, 5);
 
-  const componentNames: { name: string; dir: string }[] = [];
+  if (verbose) console.log(`Scanning ${componentFiles.length} React/TSX files...`);
+
+  // Analyze each file
+  const nodes: FileNode[] = [];
   for (const file of componentFiles) {
-    const base = basename(file, extname(file));
-    // Skip test files, stories, index re-exports
-    if (base.endsWith(".test") || base.endsWith(".spec") || base.endsWith(".stories")) continue;
-    if (base === "index") continue;
-
-    const semantic = stripSuffix(base, [
-      "Component", "Container", "Provider", "Layout", "Page", "Modal",
-      "Dialog", "Drawer", "Panel", "Widget", "Card", "List", "Form",
-    ]);
-
-    const kebab = toKebabCase(semantic);
-    if (!kebab || kebab.length < 2) continue;
-
-    const parts = file.slice(root.length + 1).split("/");
-    const dir = parts.length > 2 ? parts[parts.length - 2] : parts[0];
-    componentNames.push({ name: kebab, dir });
+    const node = await analyzeReactFile(file);
+    if (node) nodes.push(node);
   }
 
-  if (verbose) console.log(`Found ${componentNames.length} React components`);
+  if (verbose) console.log(`Analyzed ${nodes.length} component files`);
 
-  // Group by directory
-  const groups = new Map<string, string[]>();
-  for (const { name, dir } of componentNames) {
-    const groupKey = toKebabCase(dir);
-    if (!groupKey) continue;
-    const existing = groups.get(groupKey) ?? [];
-    if (!existing.includes(name)) existing.push(name);
-    groups.set(groupKey, existing);
+  // Build dependency graph
+  const { roots } = buildGraph(nodes);
+
+  if (verbose) {
+    console.log(`Found ${roots.length} root components`);
+    for (const r of roots.slice(0, 5)) {
+      console.log(`  ${r.typeName}: ${r.complexity.branches} branches, ${r.children.length} children`);
+    }
   }
 
-  return [...groups.entries()].map(([name, children]) => ({
-    name,
-    children: children.slice(0, 15),
+  const productName = basename(root);
+  const mermaid = graphToMermaid(toKebabCase(productName) || "app", roots);
+
+  const graphAreas = graphToAreas(roots);
+  const areas: AreaToken[] = graphAreas.map((a) => ({
+    name: a.name,
+    children: a.children,
     source: "component" as const,
   }));
+
+  return { areas, mermaid };
 }
 
 async function scanNextjs(root: string, ig: Ignore, verbose: boolean): Promise<AreaToken[]> {
@@ -324,9 +321,9 @@ async function scanNextjs(root: string, ig: Ignore, verbose: boolean): Promise<A
     } catch { /* can't read */ }
   }
 
-  // Also scan components
-  const componentAreas = await scanReact(root, ig, verbose);
-  areas.push(...componentAreas);
+  // Also scan components via graph analysis
+  const componentResult = await scanReact(root, ig, verbose);
+  areas.push(...componentResult.areas);
 
   return areas;
 }
@@ -512,24 +509,44 @@ export async function scan(
 
   // Use framework-specific scanner
   let areas: AreaToken[];
+  let mermaid: string;
+  const name = productName ?? "myapp";
+
   switch (projectType) {
-    case "swift":
-      areas = await scanSwift(root, ig, !!options.verbose);
+    case "swift": {
+      const result = await scanSwift(root, ig, !!options.verbose);
+      areas = result.areas;
+      mermaid = result.mermaid;
       break;
-    case "react":
-      areas = await scanReact(root, ig, !!options.verbose);
+    }
+    case "react": {
+      const result = await scanReact(root, ig, !!options.verbose);
+      areas = result.areas;
+      mermaid = result.mermaid;
       break;
-    case "nextjs":
-      areas = await scanNextjs(root, ig, !!options.verbose);
+    }
+    case "nextjs": {
+      // Next.js: use graph analysis for components + route scanning
+      const reactResult = await scanReact(root, ig, !!options.verbose);
+      const routeAreas = await scanNextjs(root, ig, !!options.verbose);
+      areas = [...routeAreas, ...reactResult.areas];
+      mermaid = reactResult.mermaid || generateMermaid(name, areas);
       break;
-    case "rails":
+    }
+    case "rails": {
       areas = await scanRails(root, ig, !!options.verbose);
+      mermaid = generateMermaid(name, areas);
       break;
-    case "django":
+    }
+    case "django": {
       areas = await scanDjango(root, ig, !!options.verbose);
+      mermaid = generateMermaid(name, areas);
       break;
-    default:
+    }
+    default: {
       areas = await scanGeneric(root, ig, !!options.verbose);
+      mermaid = generateMermaid(name, areas);
+    }
   }
 
   // Also scan existing docs for vocabulary
@@ -537,9 +554,6 @@ export async function scan(
 
   // Default concerns
   const concerns = ["performance", "visual", "crash", "ux", "data", "lifecycle"];
-
-  const name = productName ?? "myapp";
-  const mermaid = generateMermaid(name, areas);
 
   if (options.verbose) {
     console.log(`Found ${areas.length} areas`);
