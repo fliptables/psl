@@ -133,6 +133,36 @@ export async function analyzeReactFile(path: string): Promise<FileNode | null> {
 
 // ─── Graph builder ───
 
+/** Names that are infrastructure/utility, not product areas */
+const INFRASTRUCTURE_NAMES = new Set([
+  "icon", "icon-view", "tag", "tag-view", "pulsing-dot",
+  "base-tree-cell", "keyboard-navigable", "keyboard-navigable-outline",
+  "fixed-bounds", "resize-cursor", "toast-overlay", "empty-state-text",
+  "empty-state-content", "global-key-monitor", "filter-bar-key-monitor",
+  "avatar-animation", "starfield", "pixel-avatar", "hover-brighten",
+]);
+
+/** Patterns that indicate a utility/leaf component, not a product area */
+const LEAF_PATTERNS = [
+  /button$/i,     // FeedbackButton, LockButton, DictationButton
+  /^icon/i,       // IconView
+  /^tag/i,        // TagView
+  /dot$/i,        // PulsingDot
+  /monitor$/i,    // GlobalKeyMonitor
+  /handler$/i,    // ShiftEnterHandler
+  /helper$/i,
+  /util/i,
+  /extension/i,
+];
+
+function isInfrastructure(name: string, typeName: string): boolean {
+  if (INFRASTRUCTURE_NAMES.has(name)) return true;
+  for (const p of LEAF_PATTERNS) {
+    if (p.test(typeName) || p.test(name)) return true;
+  }
+  return false;
+}
+
 export function buildGraph(nodes: FileNode[]): {
   roots: GraphNode[];
   all: Map<string, GraphNode>;
@@ -175,8 +205,12 @@ export function buildGraph(nodes: FileNode[]): {
     };
     graphNodes.set(typeName, gn);
 
-    // Resolve children (referenced types that exist in our file set)
+    // Resolve children — skip infrastructure/utility references
     for (const ref of fileNode.references) {
+      const refNode = byTypeName.get(ref);
+      if (!refNode) continue;
+      if (isInfrastructure(toKebab(stripSwiftSuffix(ref)), ref)) continue;
+
       const child = toGraphNode(ref);
       if (child) gn.children.push(child);
     }
@@ -196,22 +230,75 @@ export function buildGraph(nodes: FileNode[]): {
     toGraphNode(node.typeName);
   }
 
-  // Roots = nodes with inDegree 0, or the top N most-referencing nodes
-  let roots = [...graphNodes.values()].filter((n) => n.inDegree === 0);
+  // Find the true entry point: look for App/Scene types first
+  const appEntries = [...graphNodes.values()].filter(
+    (n) =>
+      n.typeName.endsWith("App") ||
+      n.typeName.endsWith("Scene") ||
+      n.typeName === "ContentView",
+  );
 
-  // If no clear roots, pick nodes with highest outgoing references
-  if (roots.length === 0) {
-    roots = [...graphNodes.values()]
-      .sort((a, b) => b.complexity.references - a.complexity.references)
-      .slice(0, 5);
+  // Find layout containers: high out-degree, many children = layout roots
+  const layoutRoots = [...graphNodes.values()]
+    .filter(
+      (n) =>
+        n.children.length >= 3 &&
+        !isInfrastructure(n.name, n.typeName),
+    )
+    .sort((a, b) => b.children.length - a.children.length);
+
+  // Roots strategy:
+  // 1. App entry points (ScapeApp, ContentView, etc.)
+  // 2. Layout containers with many children (EmbeddedLayoutView, etc.)
+  // 3. Nodes with inDegree 0 that are NOT infrastructure
+  const rootSet = new Set<string>();
+  const roots: GraphNode[] = [];
+
+  // Add app entries
+  for (const entry of appEntries) {
+    if (!rootSet.has(entry.typeName)) {
+      rootSet.add(entry.typeName);
+      roots.push(entry);
+    }
   }
 
-  // Sort roots by complexity (most complex = most important area)
-  roots.sort(
-    (a, b) =>
-      b.complexity.references + b.complexity.branches -
-      (a.complexity.references + a.complexity.branches),
+  // Add top layout containers (if not already children of app entries)
+  for (const layout of layoutRoots.slice(0, 5)) {
+    if (!rootSet.has(layout.typeName)) {
+      // Check if this is already a child of an existing root
+      const isChild = roots.some((r) =>
+        r.children.some((c) => c.typeName === layout.typeName),
+      );
+      if (!isChild) {
+        rootSet.add(layout.typeName);
+        roots.push(layout);
+      }
+    }
+  }
+
+  // Add remaining inDegree-0 nodes that are significant (not infrastructure)
+  const orphans = [...graphNodes.values()].filter(
+    (n) =>
+      n.inDegree === 0 &&
+      !rootSet.has(n.typeName) &&
+      !isInfrastructure(n.name, n.typeName) &&
+      (n.children.length > 0 || n.complexity.branches >= 10),
   );
+  for (const orphan of orphans.slice(0, 5)) {
+    rootSet.add(orphan.typeName);
+    roots.push(orphan);
+  }
+
+  // Sort: app entries first, then by total subtree complexity
+  roots.sort((a, b) => {
+    const aIsApp = a.typeName.endsWith("App") ? 1 : 0;
+    const bIsApp = b.typeName.endsWith("App") ? 1 : 0;
+    if (aIsApp !== bIsApp) return bIsApp - aIsApp;
+    return (
+      b.complexity.references + b.complexity.branches + b.children.length * 5 -
+      (a.complexity.references + a.complexity.branches + a.children.length * 5)
+    );
+  });
 
   return { roots, all: graphNodes };
 }
@@ -262,37 +349,105 @@ export function graphToMermaid(
 
 // ─── Graph to PSL areas ───
 
+/** Recursively collect all descendant names from a node */
+function collectDescendants(node: GraphNode, depth: number, maxDepth: number): string[] {
+  if (depth > maxDepth) return [];
+  const names: string[] = [];
+  for (const child of node.children) {
+    if (!isInfrastructure(child.name, child.typeName)) {
+      names.push(child.name);
+      names.push(...collectDescendants(child, depth + 1, maxDepth));
+    }
+  }
+  return names;
+}
+
 export function graphToAreas(roots: GraphNode[]): {
   name: string;
   children: string[];
   complexity: number;
 }[] {
   const areas: { name: string; children: string[]; complexity: number }[] = [];
+  const seen = new Set<string>();
 
-  for (const root of roots) {
-    // Only include nodes that are significant (have children or high complexity)
-    if (root.children.length === 0 && root.complexity.branches < 3) continue;
+  // Strategy: find the main layout container (highest child count among roots).
+  // Its direct children become the top-level product areas.
+  // The app entry (ScapeApp) becomes a separate area for app-level concerns.
+  // Everything else (orphan roots) gets listed if significant enough.
 
-    areas.push({
-      name: root.name,
-      children: root.children
-        .filter((c) => c.complexity.branches > 1 || c.children.length > 0)
-        .map((c) => c.name)
-        .slice(0, 12),
-      complexity:
-        root.complexity.branches +
-        root.complexity.references +
-        root.children.reduce(
-          (sum, c) => sum + c.complexity.branches + c.complexity.references,
-          0,
-        ),
-    });
+  // Sort roots: layout containers first (most children), then app entries
+  const sorted = [...roots].sort((a, b) => b.children.length - a.children.length);
+
+  for (const root of sorted) {
+    if (seen.has(root.name)) continue;
+
+    // Skip the layout container itself — promote its children
+    // Only the top 1-2 layout roots get promoted (the outermost containers)
+    if (root.children.length >= 4 && areas.length < 2) {
+      seen.add(root.name);
+
+      for (const child of root.children) {
+        if (seen.has(child.name)) continue;
+        if (isInfrastructure(child.name, child.typeName)) continue;
+
+        // Must be substantial to be a top-level area
+        const totalComplexity = child.complexity.branches + child.complexity.references;
+        if (totalComplexity < 15 && child.children.length < 2) continue;
+
+        seen.add(child.name);
+
+        // Collect children 2 levels deep, deduplicated
+        const descendants = [...new Set(collectDescendants(child, 0, 2))]
+          .filter((d) => !seen.has(d))
+          .slice(0, 10);
+
+        areas.push({
+          name: child.name,
+          children: descendants,
+          complexity: totalComplexity + child.children.length * 3,
+        });
+      }
+    } else {
+      // Smaller root — list as a single area with its children
+      if (root.children.length === 0 && root.complexity.branches < 10) continue;
+
+      seen.add(root.name);
+      const descendants = [...new Set(collectDescendants(root, 0, 2))]
+        .filter((d) => !seen.has(d))
+        .slice(0, 10);
+
+      areas.push({
+        name: root.name,
+        children: descendants,
+        complexity:
+          root.complexity.branches + root.complexity.references + root.children.length * 3,
+      });
+    }
   }
 
-  // Sort by complexity — most important areas first
+  // Sort by complexity
   areas.sort((a, b) => b.complexity - a.complexity);
 
-  return areas;
+  // Remove areas with no children and low complexity — they're leaf nodes, not areas
+  const filtered = areas.filter(
+    (a) => a.children.length > 0 || a.complexity >= 30,
+  );
+
+  // Deduplicate children across areas (same child shouldn't appear in multiple)
+  const areaNames = new Set(filtered.map((a) => a.name));
+  const globalSeen = new Set<string>();
+  for (const area of filtered) {
+    area.children = area.children
+      .filter((c) => !areaNames.has(c)) // don't list other areas as children
+      .filter((c) => {
+        if (globalSeen.has(c)) return false;
+        globalSeen.add(c);
+        return true;
+      });
+  }
+
+  // Cap at ~15 areas max — more than that isn't useful as a starting point
+  return filtered.slice(0, 15);
 }
 
 // ─── Helpers ───
