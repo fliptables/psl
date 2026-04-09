@@ -148,10 +148,6 @@ No. You can write `PSL.md` by hand — it's just Markdown. The CLI is a convenie
 
 See [SPEC.md](SPEC.md) for the formal v1.0.0 specification.
 
-## Examples
-
-- [Scape (macOS app)](examples/scape.md)
-
 ## License
 
 [MIT](LICENSE)
