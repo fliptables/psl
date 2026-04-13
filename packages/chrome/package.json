@@ -1,0 +1,18 @@
+{
+  "name": "@psl/chrome",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PSL token autocomplete Chrome extension",
+  "type": "module",
+  "scripts": {
+    "build": "tsup src/background.ts src/content.ts --format esm --out-dir dist --clean && cp manifest.json dist/ && cp -r popup options dist/"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "@types/chrome": "^0.0.287"
+  },
+  "dependencies": {
+    "@psl/core": "*"
+  }
+}
