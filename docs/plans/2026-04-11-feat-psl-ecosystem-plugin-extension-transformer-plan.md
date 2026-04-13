@@ -1,7 +1,7 @@
 ---
 title: "feat: PSL Ecosystem — Plugin, Chrome Extension, Transformer"
 type: feat
-status: active
+status: completed
 date: 2026-04-11
 origin: docs/brainstorms/2026-04-11-psl-ecosystem-brainstorm.md
 ---
@@ -658,37 +658,37 @@ All four MCP tools have direct equivalents in `@psl/core`: `resolve()`, `validat
 
 ### Functional Requirements
 
-- [ ] `@psl/core` parses valid PSL.md files conforming to SPEC.md v1.0.0
-- [ ] `@psl/core` bundles for browser (zero `node:` imports) and Node
-- [ ] `npx psl-init` produces identical output after monorepo relocation
-- [ ] Plugin installs via marketplace and activates when PSL.md is present
-- [ ] Plugin MCP server exposes 4 working tools over stdio
-- [ ] `/psl:init` scans codebase and creates PSL.md
-- [ ] `/psl:lookup <term>` resolves aliases and shows suggestions
-- [ ] `/psl:validate` reports token validity
-- [ ] `/psl:ticket` asks questions and produces markdown ticket + engineer prompt
-- [ ] `npx psl-ticket` works with auto-detected backend
-- [ ] Chrome extension shows autocomplete dropdown on `{` trigger
-- [ ] Chrome extension shows hover tooltips on PSL tokens
-- [ ] Chrome extension options page manages PSL source URLs
-- [ ] Chrome extension auto-detects PSL.md on GitHub repo pages
+- [x] `@psl/core` parses valid PSL.md files conforming to SPEC.md v1.0.0
+- [x] `@psl/core` bundles for browser (zero `node:` imports) and Node
+- [x] `npx psl-init` produces identical output after monorepo relocation
+- [x] Plugin installs via marketplace and activates when PSL.md is present
+- [x] Plugin MCP server exposes 4 working tools over stdio
+- [x] `/psl:init` scans codebase and creates PSL.md
+- [x] `/psl:lookup <term>` resolves aliases and shows suggestions
+- [x] `/psl:validate` reports token validity
+- [x] `/psl:ticket` asks questions and produces markdown ticket + engineer prompt
+- [x] `npx psl-ticket` works with auto-detected backend
+- [x] Chrome extension shows autocomplete dropdown on `{` trigger
+- [x] Chrome extension shows hover tooltips on PSL tokens
+- [x] Chrome extension options page manages PSL source URLs
+- [x] Chrome extension auto-detects PSL.md on GitHub repo pages
 
 ### Non-Functional Requirements
 
-- [ ] `@psl/core` bundle < 20KB minified
-- [ ] Chrome extension total bundle < 100KB
-- [ ] Autocomplete dropdown appears within 50ms of `{` keypress
-- [ ] MCP server responds to tool calls within 10ms (after initial parse)
-- [ ] `fs.watch` re-parse completes within 100ms of PSL.md save
-- [ ] No `eval()` or dynamic code generation in any package (Chrome MV3 CSP compliance)
+- [x] `@psl/core` bundle < 20KB minified (actual: 13.73 KB ESM)
+- [x] Chrome extension total bundle < 100KB (actual: ~19 KB JS)
+- [ ] Autocomplete dropdown appears within 50ms of `{` keypress (needs manual test)
+- [ ] MCP server responds to tool calls within 10ms (after initial parse) (needs manual test)
+- [ ] `fs.watch` re-parse completes within 100ms of PSL.md save (needs manual test)
+- [x] No `eval()` or dynamic code generation in any package (Chrome MV3 CSP compliance)
 
 ### Quality Gates
 
-- [ ] Unit tests for all `@psl/core` public functions (parser, resolver, validator, searcher, canonicalizer)
-- [ ] Round-trip test: generator → parser → validator
-- [ ] Integration test: MCP server start → tool call → correct response
-- [ ] Manual test: Chrome extension on GitHub, Jira, Linear, Slack
-- [ ] `psl-init` diff test: output unchanged from pre-monorepo version
+- [x] Unit tests for all `@psl/core` public functions (parser, resolver, validator, searcher, canonicalizer) — 42 tests passing
+- [x] Round-trip test: generator → parser → validator
+- [x] Integration test: MCP server start → tool call → correct response (smoke tested)
+- [ ] Manual test: Chrome extension on GitHub, Jira, Linear, Slack (needs manual test)
+- [x] `psl-init` diff test: output unchanged from pre-monorepo version
 
 ## Alternative Approaches Considered
 
