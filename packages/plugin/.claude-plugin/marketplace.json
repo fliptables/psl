@@ -1,0 +1,22 @@
+{
+  "name": "psl",
+  "owner": {
+    "name": "Elliot Nash",
+    "email": "elliot@venturemedias.com"
+  },
+  "plugins": [
+    {
+      "name": "psl",
+      "source": {
+        "source": "git-subdir",
+        "url": "fliptables/psl",
+        "path": "packages/plugin"
+      },
+      "description": "Product Spec Language — canonical vocabulary tools for your codebase. Auto-loads when PSL.md is present. Slash commands for init, lookup, validate, and ticket generation. MCP server with resolve, validate, search, canonicalize, and list tools.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Elliot Nash"
+      }
+    }
+  ]
+}
