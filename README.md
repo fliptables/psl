@@ -93,6 +93,127 @@ dashboard: [home, main-view]
 ```
 ````
 
+## Ecosystem
+
+PSL ships with tools that make the vocabulary actionable — not just a file sitting in your repo.
+
+### Claude Code Plugin
+
+Install the plugin and Claude learns your vocabulary automatically:
+
+```bash
+/plugin add psl
+```
+
+Once installed, when you open a repo with `PSL.md`, Claude will:
+- Use canonical names in generated code and commits
+- Resolve aliases when you use them in conversation
+- Offer to run `/psl:init` if no `PSL.md` exists
+
+**Slash commands:**
+
+| Command | What it does |
+|---------|-------------|
+| `/psl:init` | Scan the codebase and generate a draft `PSL.md` |
+| `/psl:lookup <term>` | Look up a term — resolve aliases, show metadata |
+| `/psl:validate` | Check `PSL.md` for issues (invalid tokens, alias conflicts) |
+| `/psl:ticket "<description>"` | Generate a PSL-tagged ticket from natural language |
+
+**MCP tools** (available to Claude automatically):
+
+- `psl_resolve_alias` — resolve any term to its canonical name with full metadata
+- `psl_validate_token` — validate a token like `{myapp.dashboard.performance}`
+- `psl_search_vocab` — fuzzy search the vocabulary
+- `psl_canonicalize` — replace all aliases in text with canonical names
+- `psl_list_vocab` — browse all vocabulary terms grouped by section
+
+### Ticket Generator CLI
+
+Turn plain English into PSL-tagged tickets from the command line:
+
+```bash
+npx psl-ticket "the sidebar is slow when there are lots of files" --psl ./PSL.md
+```
+
+Output:
+
+```markdown
+## Ticket: Improve sidebar performance with many files
+Tokens: {myapp.sidebar.performance}
+
+**Problem.** The sidebar becomes sluggish when rendering large file trees.
+
+**Acceptance.** Sidebar renders within 200ms with 1,000+ files.
+
+---
+
+## Engineer prompt
+> Fix {myapp.sidebar.performance} — the file tree takes >2s to render
+> with large repos. Start with the tree virtualization in sidebar/*.
+> Acceptance: renders within 200ms for 1,000+ files.
+```
+
+The ticket generator reads your `PSL.md` to resolve terms, pick the right tokens, and reference existing patterns in your codebase.
+
+**Options:**
+
+```bash
+# Specify PSL.md location (otherwise searches up from cwd)
+npx psl-ticket --psl ./PSL.md "description"
+
+# Use Anthropic API directly instead of Claude Code
+npx psl-ticket --backend api "description"
+
+# Configure API key for the API backend
+npx psl-ticket setup
+
+# Override the default model (Haiku 4.5)
+npx psl-ticket --model claude-sonnet-4-5-20250514 "description"
+```
+
+### Chrome Extension
+
+Autocomplete PSL tokens in Jira, Linear, Slack, and GitHub. Type `{` in any textarea to trigger the dropdown.
+
+**Install from source:**
+
+```bash
+cd packages/chrome
+npm run build
+```
+
+Then load unpacked in Chrome:
+1. Go to `chrome://extensions`
+2. Enable "Developer mode"
+3. Click "Load unpacked" and select `packages/chrome/dist/`
+
+**Features:**
+- Type `{` in any textarea to autocomplete PSL tokens
+- Hover over existing PSL tokens to see definitions, aliases, and children
+- Manage PSL sources in the extension options page (add GitHub raw URLs)
+- Auto-detects `PSL.md` when browsing GitHub repos
+
+### Core Library
+
+For building your own PSL tools:
+
+```bash
+npm install @psl/core
+```
+
+```typescript
+import { parse, resolve, resolveDetailed, validate, search, canonicalize } from '@psl/core';
+
+const vocab = parse(pslMarkdown);
+
+resolve('perf', vocab);           // { found: true, canonical: 'performance' }
+validate('{myapp.dashboard}', vocab); // { valid: true, errors: [] }
+search('dash', vocab);            // [{ canonical: 'dashboard', score: 0.9, ... }]
+canonicalize('Fix {myapp.perf}', vocab); // { text: 'Fix {myapp.performance}', ... }
+```
+
+`@psl/core` is browser-safe (zero Node dependencies) so it works in Chrome extensions, web apps, and Node CLIs.
+
 ## For AI Agents
 
 Add this to your `CLAUDE.md`, `AGENTS.md`, or system prompt:
@@ -104,10 +225,7 @@ When a user or spec refers to a PSL alias, resolve to the canonical
 name before writing code, naming variables, or writing commit messages.
 ```
 
-Agents should:
-1. Read `PSL.md` to learn the product's vocabulary
-2. Use canonical names (not aliases) in generated code
-3. Reference PSL tokens in commit messages and PR descriptions when relevant
+Or just install the Claude Code plugin (`/plugin add psl`) and it handles this automatically.
 
 ## Generating PSL.md
 
@@ -117,12 +235,33 @@ npx psl-init
 
 # Specify a different project root
 npx psl-init --path ./my-project
-
-# Include git history analysis
-npx psl-init --git
 ```
 
 The generator scans directory structure, filenames, and existing docs to produce a draft. You'll want to edit it — the goal is 60-70% accuracy so editing is faster than writing from scratch.
+
+## Development
+
+This is a monorepo with npm workspaces:
+
+```
+packages/
+  core/       # @psl/core — parser, resolver, validator, search (browser-safe)
+  init/       # psl-init CLI — codebase scanner + PSL.md generator
+  plugin/     # Claude Code plugin — skills, slash commands, MCP server
+  chrome/     # Chrome MV3 extension — autocomplete + tooltips
+  ticket/     # psl-ticket CLI — ticket generator
+```
+
+```bash
+# Install dependencies
+npm install
+
+# Build all packages (core first, then the rest)
+npm run build
+
+# Run tests
+npm test -w @psl/core
+```
 
 ## FAQ
 
