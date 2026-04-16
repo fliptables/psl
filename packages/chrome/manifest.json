@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "PSL — Product Spec Language",
+  "version": "1.0.0",
+  "description": "Autocomplete PSL tokens in Jira, Linear, Slack, GitHub, and more",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://raw.githubusercontent.com/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.atlassian.net/*",
+        "https://linear.app/*",
+        "https://app.slack.com/*",
+        "https://github.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options/options.html",
+  "action": {
+    "default_popup": "popup/popup.html"
+  }
+}

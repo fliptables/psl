@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { width: 280px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #e0e0e0; padding: 16px; }
+    h1 { font-size: 14px; color: #7b68ee; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .source { padding: 6px 0; border-bottom: 1px solid #222; font-size: 12px; }
+    .source-name { font-weight: 600; }
+    .source-count { color: #888; }
+    .empty { color: #666; font-size: 12px; padding: 8px 0; }
+    .link { color: #7b68ee; text-decoration: none; font-size: 12px; display: block; margin-top: 12px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>PSL</h1>
+  <div id="sources"></div>
+  <a class="link" id="options">Options</a>
+
+  <script>
+    async function render() {
+      const data = await chrome.runtime.sendMessage({ type: "getVocabularies" });
+      const el = document.getElementById("sources");
+
+      if (!data?.sources?.length) {
+        el.innerHTML = '<div class="empty">No PSL files loaded.</div>';
+        return;
+      }
+
+      el.innerHTML = data.sources.map(s => `
+        <div class="source">
+          <span class="source-name">${s.productName}</span>
+          ${s.error ? '<span class="source-count" style="color:#ff6b6b"> (error)</span>' : ''}
+        </div>
+      `).join("");
+    }
+
+    document.getElementById("options").onclick = () => chrome.runtime.openOptionsPage();
+    render();
+  </script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "psl-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "packages/plugin/server"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
