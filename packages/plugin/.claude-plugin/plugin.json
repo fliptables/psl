@@ -1,6 +1,6 @@
 {
   "name": "psl",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Product Spec Language — canonical vocabulary tools for your codebase",
   "author": {
     "name": "Elliot Nash"
