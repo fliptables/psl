@@ -1,16 +1,16 @@
 {
   "name": "psl-init",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Generate PSL.md for your project — Product Spec Language",
   "type": "module",
   "bin": {
-    "psl-init": "./dist/cli.js"
+    "psl-init": "./dist/index.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm --out-dir dist --clean",
+    "build": "tsup",
     "dev": "tsx src/index.ts"
   },
   "engines": {
@@ -37,7 +37,6 @@
     "tsx": "^4.0.0"
   },
   "dependencies": {
-    "@psl/core": "*",
     "commander": "^12.0.0",
     "ignore": "^6.0.0"
   }

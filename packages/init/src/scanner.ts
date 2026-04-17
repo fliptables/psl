@@ -322,6 +322,85 @@ async function scanNextjsRoutes(root: string, ig: Ignore, verbose: boolean): Pro
   return areas;
 }
 
+// ─── Directory-based area scanner (features, modules, pages) ───
+
+const AREA_DIR_NAMES = new Set([
+  "features", "modules", "pages", "views", "screens", "sections",
+  "domains", "pods", "areas",
+]);
+
+const AREA_DIR_SKIP = new Set([
+  "components", "shared", "common", "utils", "helpers", "hooks",
+  "lib", "api", "graphql", "services", "stores", "reducers",
+  "actions", "types", "interfaces", "constants", "config",
+  "assets", "styles", "layouts", "middleware", "providers",
+  "__tests__", "__mocks__", "test", "tests",
+]);
+
+async function scanDirectoryAreas(root: string, ig: Ignore, verbose: boolean): Promise<AreaToken[]> {
+  const areas: AreaToken[] = [];
+
+  // Search in root and src/ for conventional area directories
+  for (const base of ["", "src", "app", "lib"]) {
+    const searchDir = base ? join(root, base) : root;
+    if (!(await fileExists(searchDir))) continue;
+
+    try {
+      const dir = await opendir(searchDir);
+      for await (const entry of dir) {
+        if (!entry.isDirectory()) continue;
+        if (!AREA_DIR_NAMES.has(entry.name.toLowerCase())) continue;
+        if (ig.ignores(entry.name + "/")) continue;
+
+        // Found a features/modules/pages directory — scan its children as areas
+        const areaDir = join(searchDir, entry.name);
+        try {
+          const subDir = await opendir(areaDir);
+          for await (const sub of subDir) {
+            if (!sub.isDirectory()) continue;
+            if (sub.name.startsWith(".") || sub.name.startsWith("_")) continue;
+            if (AREA_DIR_SKIP.has(sub.name.toLowerCase())) continue;
+
+            const kebab = toKebab(sub.name);
+            if (!kebab || kebab.length < 2) continue;
+
+            // Scan one level deeper for children
+            const children: string[] = [];
+            try {
+              const childDir = await opendir(join(areaDir, sub.name));
+              for await (const child of childDir) {
+                if (!child.isDirectory()) continue;
+                if (child.name.startsWith(".") || child.name.startsWith("_")) continue;
+                if (AREA_DIR_SKIP.has(child.name.toLowerCase())) continue;
+                const childKebab = toKebab(child.name);
+                if (childKebab && childKebab.length > 1) children.push(childKebab);
+              }
+            } catch { /* can't read */ }
+
+            areas.push({ name: kebab, children: children.slice(0, 15) });
+          }
+        } catch { /* can't read */ }
+      }
+    } catch { /* can't read */ }
+  }
+
+  if (verbose) console.log(`Found ${areas.length} directory-based areas`);
+  return areas;
+}
+
+/** Merge directory-based areas with graph-based areas. Directory wins on conflicts. */
+function mergeAreas(dirAreas: AreaToken[], graphAreas: AreaToken[]): AreaToken[] {
+  const seen = new Set(dirAreas.map(a => a.name));
+  const merged = [...dirAreas];
+  for (const area of graphAreas) {
+    if (!seen.has(area.name)) {
+      seen.add(area.name);
+      merged.push(area);
+    }
+  }
+  return merged;
+}
+
 // ─── Generic directory scanner (fallback) ───
 
 async function scanGeneric(root: string, ig: Ignore, verbose: boolean): Promise<GraphScanResult> {
@@ -406,11 +485,17 @@ export async function scan(
     case "swift":
       result = await scanWithGraph(root, ig, verbose, new Set([".swift"]), analyzeSwiftFile, "Swift");
       break;
-    case "react":
-      result = await scanWithGraph(root, ig, verbose, new Set([".tsx", ".jsx"]), analyzeReactFile, "React");
+    case "react": {
+      const reactResult = await scanWithGraph(root, ig, verbose, new Set([".tsx", ".jsx", ".js"]), analyzeReactFile, "React");
+      const dirAreas = await scanDirectoryAreas(root, ig, verbose);
+      result = {
+        areas: mergeAreas(dirAreas, reactResult.areas),
+        mermaid: reactResult.mermaid,
+      };
       break;
+    }
     case "nextjs": {
-      const reactResult = await scanWithGraph(root, ig, verbose, new Set([".tsx", ".jsx"]), analyzeReactFile, "React");
+      const reactResult = await scanWithGraph(root, ig, verbose, new Set([".tsx", ".jsx", ".js"]), analyzeReactFile, "React");
       const routeAreas = await scanNextjsRoutes(root, ig, verbose);
       result = {
         areas: [...routeAreas, ...reactResult.areas],

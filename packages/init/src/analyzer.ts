@@ -182,21 +182,42 @@ export async function analyzeSwiftFile(path: string): Promise<FileNode | null> {
 
 // ─── React/TSX analyzer ───
 
-const TSX_COMPONENT_PATTERN = /(?:export\s+(?:default\s+)?)?(?:function|const)\s+([A-Z][A-Za-z0-9]+)/g;
+const TSX_COMPONENT_PATTERN = /(?:export\s+(?:default\s+)?)?(?:function|const)\s+([A-Z][a-z][A-Za-z0-9]*)/g;
 const TSX_JSX_PATTERN = /<([A-Z][A-Za-z0-9]+)/g;
+
+/** Check if a name is ALL_CAPS (constant/enum, not a component) */
+function isAllCaps(name: string): boolean {
+  return name === name.toUpperCase() && name.length > 1;
+}
 
 export async function analyzeReactFile(path: string): Promise<FileNode | null> {
   const content = await readSource(path);
   if (!content) return null;
 
   const base = basename(path);
+  const ext = extname(path);
   if (base.includes(".test.") || base.includes(".spec.") || base.includes(".stories.")) return null;
-  if (base === "index.tsx" || base === "index.jsx") return null;
 
-  const componentMatches = [...content.matchAll(TSX_COMPONENT_PATTERN)];
+  // For index files, derive the component name from the parent directory
+  const isIndex = base === "index.tsx" || base === "index.jsx" || base === "index.js";
+
+  // Verify this file actually contains JSX (important for .js files)
+  if (ext === ".js" && !content.includes("<") && !content.includes("React.createElement")) return null;
+
+  const componentMatches = [...content.matchAll(TSX_COMPONENT_PATTERN)]
+    .filter(m => !isAllCaps(m[1]));
   if (componentMatches.length === 0) return null;
 
-  const typeName = componentMatches[0][1];
+  let typeName = componentMatches[0][1];
+
+  // For index files, prefer the parent directory name as the component name
+  if (isIndex) {
+    const dir = basename(path.replace(/\/[^/]+$/, ""));
+    if (dir && /^[A-Z]/.test(dir)) {
+      typeName = dir;
+    }
+  }
+
   const name = toKebab(stripSuffix(typeName, REACT_SUFFIXES));
   if (!name) return null;
 
@@ -441,12 +462,33 @@ export async function analyzeRubyFile(path: string): Promise<FileNode | null> {
 const LEAF_PATTERNS = [
   /button$/i,
   /^icon/i,
+  /^micro/i,
   /^tag$/i,
   /monitor$/i,
   /handler$/i,
   /helper$/i,
   /util/i,
   /extension$/i,
+  /wrapper$/i,
+  /^divider$/i,
+  /^separator$/i,
+  /^spacer$/i,
+  /cursor$/i,
+  /animation$/i,
+  /^dot$/i,
+  /^badge$/i,
+  /^avatar$/i,
+  /^tooltip$/i,
+  /^spinner$/i,
+  /^loader$/i,
+  /^skeleton$/i,
+  /^overlay$/i,
+  /^backdrop$/i,
+  /^chevron/i,
+  /^arrow/i,
+  /^check$/i,
+  /^close$/i,
+  /^empty-state/i,
 ];
 
 function isInfrastructure(name: string, typeName: string): boolean {
